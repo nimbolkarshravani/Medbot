@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MedAnalyzer · AI Medical Report Analysis</title>
+  <title>MedBot · AI Medical Report Analysis</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -512,7 +512,7 @@ async function readFile(file) {
 }
 
 /* ── Gemini API ─────────────────────────────────────────────────────────── */
-const PROMPT = (report) => `You are Dr. Aiden, a warm and experienced physician. Analyze this medical report.
+const PROMPT = (report) => `You are a warm, friendly doctor explaining medical results in simple language a patient can understand. Analyze this medical report.
 Reply ONLY with valid JSON (no markdown fences, no extra text) matching this exact structure:
 {
   "reportType": "short report type",
@@ -522,7 +522,7 @@ Reply ONLY with valid JSON (no markdown fences, no extra text) matching this exa
     { "category": "critical|warning|normal", "title": "...", "description": "Max 2 plain-English sentences. Explain jargon." }
   ],
   "actions": ["Action 1", "Action 2", "Action 3"],
-  "drAidenNote": "Warm personal 1-sentence note to the patient"
+  "drAidenNote": "Warm, reassuring 1-sentence note to help the patient feel informed and supported"
 }
 
 Rules: max 6 findings, prioritize critical first, plain English throughout, no jargon without explanation.
@@ -628,7 +628,7 @@ function ConsentModal({ preview, onConfirm, onCancel }) {
         <div className="modal-btns">
           <button className="btn-ghost" onClick={onCancel}>Cancel</button>
           <button className="btn-confirm" onClick={onConfirm} disabled={!done}>
-            {done ? 'Analyze with Dr. Aiden →' : `${3 - count} consent${3 - count !== 1 ? 's' : ''} left`}
+            {done ? 'Analyze Report →' : `${3 - count} consent${3 - count !== 1 ? 's' : ''} left`}
           </button>
         </div>
       </div>
@@ -640,7 +640,7 @@ function ConsentModal({ preview, onConfirm, onCancel }) {
 const STEPS = [
   'Reading & extracting text',
   'Anonymizing personal data',
-  'Connecting to Dr. Aiden',
+  'Connecting to AI doctor',
   'Generating AI analysis',
   'Preparing your report',
 ];
@@ -650,7 +650,7 @@ function LoadingScreen({ step }) {
     <div className="loading-wrap">
       <div className="loading-card">
         <div className="spinner"/>
-        <div className="loading-h">Dr. Aiden is reviewing<br/>your report</div>
+        <div className="loading-h">MedBot is reviewing<br/>your report</div>
         <div className="loading-sub">Anonymizing & analyzing in real-time</div>
         <ul className="steps">
           {STEPS.map((s, i) => (
@@ -687,7 +687,7 @@ function Results({ result, onReset }) {
       <div className="sev-card">
         <div className="dr-pill">
           <div className="dr-avatar">👨‍⚕️</div>
-          Dr. Aiden · AI Medical Analysis
+          MedBot · AI Medical Analysis
         </div>
         <div className="sev-row">
           <Ring score={result.healthScore}/>
@@ -827,7 +827,7 @@ function App() {
       <nav className="nav">
         <div className="nav-logo">
           <div className="nav-logo-mark">⚕</div>
-          MedAnalyzer
+          MedBot
         </div>
         <div className="nav-pill">
           <div className="nav-dot"/>
@@ -841,8 +841,8 @@ function App() {
           <div className="hero-badge">✦ AI-Powered Medical Analysis</div>
           <h1 className="hero-h1">Understand Your<br/><span className="grad">Medical Reports</span></h1>
           <p className="hero-sub">
-            Upload any medical report and receive plain-English insights from Dr. Aiden,
-            your AI analyst — with automatic privacy protection built in.
+            Upload any medical report and receive plain-English insights from MedBot,
+            your AI medical analyst — with automatic privacy protection built in.
           </p>
 
           <div className="card upload-card">
@@ -892,7 +892,7 @@ function App() {
             )}
 
             <button className="btn" onClick={begin} disabled={!canGo}>
-              {canGo ? 'Analyze with Dr. Aiden →'
+              {canGo ? 'Analyze with MedBot →'
                 : !key ? 'Enter your Gemini API key to continue'
                 : 'Upload a report to continue'}
             </button>
