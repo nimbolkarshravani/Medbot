@@ -520,6 +520,43 @@
     .chat-send:hover { transform: scale(1.08); box-shadow: 0 6px 16px rgba(20,184,166,.4); }
     .chat-send:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
 
+    /* ── Error states ── */
+    .err-screen { text-align: center; }
+    .err-icon { font-size: 52px; margin-bottom: 20px; }
+    .err-h { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
+    .err-sub { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
+    .btn-retry-main {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 14px 32px; margin-bottom: 12px;
+      background: linear-gradient(135deg, var(--teal), var(--cyan));
+      color: #fff; border: none; border-radius: 13px;
+      font-size: 15px; font-weight: 700; cursor: pointer; transition: all .22s;
+      width: 100%;  justify-content: center;
+    }
+    .btn-retry-main:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(20,184,166,.38); }
+    .btn-back-link {
+      background: none; border: none; color: var(--muted);
+      font-size: 14px; cursor: pointer; padding: 8px;
+      transition: color .18s; display: block; width: 100%; text-align: center;
+    }
+    .btn-back-link:hover { color: var(--ink); }
+
+    /* Chat inline error bubble */
+    .chat-err {
+      background: #fff7ed; border: 1px solid rgba(245,158,11,.3);
+      border-radius: 16px; border-bottom-left-radius: 4px;
+      padding: 14px 16px; max-width: 74%;
+    }
+    .chat-err-text { font-size: 14px; color: #92400e; margin-bottom: 10px; line-height: 1.5; }
+    .btn-retry-chat {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 16px;
+      background: linear-gradient(135deg, var(--teal), var(--cyan));
+      color: #fff; border: none; border-radius: 99px;
+      font-size: 13px; font-weight: 700; cursor: pointer; transition: all .2s;
+    }
+    .btn-retry-chat:hover { transform: translateY(-1px); box-shadow: 0 6px 14px rgba(20,184,166,.35); }
+
     @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
 
     /* ── Toast ── */
@@ -595,6 +632,13 @@ function highlight(text) {
     out = out.replace(new RegExp(r.source, r.flags), `<mark class="pii">${t}</mark>`);
   }
   return out;
+}
+
+/* ── Error classification ───────────────────────────────────────────────── */
+function isRetryable(err) {
+  return /503|429|overload|high.?demand|busy|quota|rate.?limit|too.?many|unavailable/i.test(
+    err.message || ''
+  );
 }
 
 /* ── PDF / text extraction ─────────────────────────────────────────────── */
@@ -847,7 +891,29 @@ function Chat({ apiKey, reportText, analysis }) {
       const reply = await callGeminiChat(apiKey, reportText, analysis, snapshot, q);
       setMsgs(p => [...p, { role: 'bot', text: reply }]);
     } catch (e) {
-      setMsgs(p => [...p, { role: 'bot', text: `Sorry, something went wrong: ${e.message}` }]);
+      if (isRetryable(e)) {
+        setMsgs(p => [...p, { role: 'error', question: q, snapshot }]);
+      } else {
+        setMsgs(p => [...p, { role: 'bot', text: `Sorry, something went wrong: ${e.message}` }]);
+      }
+    } finally {
+      setBusy(false);
+      setTimeout(() => textareaRef.current?.focus(), 50);
+    }
+  };
+
+  const retryChat = async (question, snapshot) => {
+    setMsgs(p => p.filter(m => !(m.role === 'error' && m.question === question)));
+    setBusy(true);
+    try {
+      const reply = await callGeminiChat(apiKey, reportText, analysis, snapshot, question);
+      setMsgs(p => [...p, { role: 'bot', text: reply }]);
+    } catch (e) {
+      if (isRetryable(e)) {
+        setMsgs(p => [...p, { role: 'error', question, snapshot }]);
+      } else {
+        setMsgs(p => [...p, { role: 'bot', text: `Sorry, something went wrong: ${e.message}` }]);
+      }
     } finally {
       setBusy(false);
       setTimeout(() => textareaRef.current?.focus(), 50);
@@ -895,12 +961,25 @@ function Chat({ apiKey, reportText, analysis }) {
       {/* Message list */}
       {msgs.length > 0 && (
         <div className="chat-msgs">
-          {msgs.map((m, i) => (
-            <div key={i} className={`msg ${m.role}`}>
-              {m.role === 'bot' && <div className="msg-av">👨‍⚕️</div>}
-              <div className="msg-bubble">{m.text}</div>
-            </div>
-          ))}
+          {msgs.map((m, i) => {
+            if (m.role === 'error') return (
+              <div key={i} className="msg bot">
+                <div className="msg-av">👨‍⚕️</div>
+                <div className="chat-err">
+                  <div className="chat-err-text">Gemini is busy right now. Please try again.</div>
+                  <button className="btn-retry-chat" onClick={() => retryChat(m.question, m.snapshot)}>
+                    🔄 Retry
+                  </button>
+                </div>
+              </div>
+            );
+            return (
+              <div key={i} className={`msg ${m.role}`}>
+                {m.role === 'bot' && <div className="msg-av">👨‍⚕️</div>}
+                <div className="msg-bubble">{m.text}</div>
+              </div>
+            );
+          })}
 
           {/* Typing indicator */}
           {busy && (
@@ -1085,21 +1164,31 @@ function App() {
     }
   };
 
-  const confirmConsent = async () => {
-    setConsent(false); setScreen('loading'); setStep(2);
+  /* Extracted so both confirmConsent and the Retry button can call it */
+  const runAnalysis = useCallback(async (textToAnalyze) => {
+    setScreen('loading'); setStep(2);
     try {
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 400));
       setStep(3);
-      const r = await callGemini(key, anonText);
+      const r = await callGemini(key, textToAnalyze);
       setStep(4);
-      await new Promise(res => setTimeout(res, 350));
+      await new Promise(res => setTimeout(res, 300));
       setResult(r);
       setScreen('results');
       toast('Analysis complete!', 'success');
     } catch (e) {
-      toast(`Analysis failed: ${e.message}`, 'error');
-      setScreen('upload');
+      if (isRetryable(e)) {
+        setScreen('error');
+      } else {
+        toast(`Analysis failed: ${e.message}`, 'error');
+        setScreen('upload');
+      }
     }
+  }, [key]);
+
+  const confirmConsent = async () => {
+    setConsent(false);
+    await runAnalysis(anonText);
   };
 
   const reset = () => { setScreen('upload'); setFile(null); setResult(null); setAnonText(''); setStep(0); };
@@ -1192,6 +1281,23 @@ function App() {
 
       {/* Loading */}
       {screen === 'loading' && <LoadingScreen step={step}/>}
+
+      {/* Analysis error */}
+      {screen === 'error' && (
+        <div className="loading-wrap">
+          <div className="loading-card err-screen">
+            <div className="err-icon">⚠️</div>
+            <div className="err-h">Gemini is busy right now</div>
+            <div className="err-sub">The API is under high demand. Your report is still ready — just try again.</div>
+            <button className="btn-retry-main" onClick={() => runAnalysis(anonText)}>
+              🔄 Retry
+            </button>
+            <button className="btn-back-link" onClick={() => setScreen('upload')}>
+              ← Go back
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Results */}
       {screen === 'results' && result && (
