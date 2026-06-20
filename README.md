@@ -26,8 +26,14 @@ MedBot is a privacy-first web app that turns complex medical reports into clear,
 | JSX transform | Babel Standalone (via CDN) |
 | PDF extraction | PDF.js 3.11 (via CDN) |
 | AI analysis | Google Gemini 2.5 Flash (v1beta REST API) |
+| Auth | Supabase magic-link (email OTP) |
+| Backend | FastAPI as Vercel Python serverless functions (`/api`) |
+| Database | Supabase Postgres + pgvector (RLS-protected) |
 | Styling | Vanilla CSS — glassmorphism, CSS animations, custom properties |
-| Deployment | Static file — Vercel, GitHub Pages, Netlify, or any web server |
+| Deployment | Vercel — static frontend + serverless backend in one project |
+
+> Auth and backend are **optional**. With no Supabase credentials set, MedBot
+> runs fully client-side exactly as before (manual API key, no login).
 
 ---
 

@@ -659,6 +659,18 @@ const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
 
+/* ── Backend API (same origin, served by Vercel serverless under /api) ── */
+const API_BASE = '/api';
+
+async function apiFetch(path, options = {}) {
+  const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}
+
 /* ── Auth hook ── */
 function useAuth() {
   const [user, setUser] = useState(null);
