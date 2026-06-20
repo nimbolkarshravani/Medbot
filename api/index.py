@@ -63,6 +63,7 @@ class VerifyRequest(BaseModel):
 
 @app.post("/api/auth/login")
 async def auth_login(body: LoginRequest):
+    """Send OTP code via Supabase email (not magic link)"""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{SUPABASE_URL}/auth/v1/otp",
@@ -70,13 +71,13 @@ async def auth_login(body: LoginRequest):
             headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
         )
     if resp.status_code >= 400:
-        detail = "Failed to send verification email"
+        detail = "Failed to send verification code"
         try:
             detail = resp.json().get("msg", detail)
         except Exception:
             pass
         raise HTTPException(status_code=400, detail=detail)
-    return {"message": "Check your email for a verification code"}
+    return {"message": "Check your email for a 6-digit verification code"}
 
 
 @app.post("/api/auth/verify")
