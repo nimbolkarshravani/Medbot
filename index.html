@@ -8,6 +8,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <style>
     :root {
       --teal:       #14b8a6;
@@ -573,6 +574,49 @@
     .toast.info    { background: var(--info); }
     .toast-icon { font-size: 16px; flex-shrink: 0; }
 
+    /* ── Auth / Login ── */
+    .login-wrap {
+      padding: 112px 24px 56px;
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+    }
+    .login-card {
+      width: 100%; max-width: 420px;
+      background: rgba(255,255,255,.88); backdrop-filter: blur(20px);
+      border: 1px solid rgba(20,184,166,.14); border-radius: 24px;
+      padding: 40px; box-shadow: 0 20px 64px rgba(20,184,166,.13), 0 4px 20px rgba(0,0,0,.05);
+      animation: fadeSlideUp .6s ease both;
+    }
+    .login-icon {
+      width: 56px; height: 56px; margin: 0 auto 20px;
+      background: linear-gradient(135deg, var(--teal), var(--cyan));
+      border-radius: 16px; display: flex; align-items: center; justify-content: center;
+      font-size: 26px;
+    }
+    .login-h { font-size: 24px; font-weight: 900; margin-bottom: 8px; text-align: center; }
+    .login-sub { font-size: 14px; color: var(--muted); line-height: 1.55; margin-bottom: 28px; text-align: center; }
+    .login-sent {
+      padding: 16px; border-radius: 13px; text-align: center;
+      background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.22);
+      font-size: 14px; color: #059669; font-weight: 600; line-height: 1.55;
+    }
+    .login-sent-sub { font-weight: 400; color: var(--muted); margin-top: 8px; font-size: 13px; }
+
+    /* Navbar user section */
+    .nav-user {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .nav-email {
+      font-size: 13px; font-weight: 600; color: var(--ink);
+      max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .btn-logout {
+      padding: 6px 14px; border-radius: 99px;
+      background: rgba(239,68,68,.08); color: #dc2626;
+      border: 1px solid rgba(239,68,68,.2);
+      font-size: 12px; font-weight: 600; cursor: pointer; transition: all .18s;
+    }
+    .btn-logout:hover { background: rgba(239,68,68,.15); }
+
     /* ── Animations ── */
     @keyframes fadeIn      { from { opacity: 0; } to { opacity: 1; } }
     @keyframes fadeSlideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
@@ -604,9 +648,51 @@
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
-/* ── YOUR API KEY ── Paste your Gemini key here for local/personal use ── */
+/* ── Config — injected at build time by build.js ────────────────────────── */
 const GEMINI_API_KEY = '';
+const SUPABASE_URL = '';
+const SUPABASE_ANON_KEY = '';
 /* ──────────────────────────────────────────────────────────────────────── */
+
+/* ── Supabase client ── */
+const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+/* ── Auth hook ── */
+function useAuth() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => setUser(session?.user ?? null)
+    );
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const signIn = async (email) => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin },
+    });
+    return { error };
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  };
+
+  return { user, loading, signIn, signOut };
+}
 
 /* ── PII patterns ─────────────────────────────────────────────────────── */
 const PII = [
@@ -1121,8 +1207,95 @@ function Results({ result, onReset, apiKey, reportText }) {
   );
 }
 
+/* ── Login screen ──────────────────────────────────────────────────────── */
+function LoginScreen({ onSignIn }) {
+  const [email, setEmail] = useState('');
+  const [emailFocus, setEmailFocus] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || busy) return;
+    setBusy(true); setErr('');
+    const { error } = await onSignIn(email.trim());
+    if (error) {
+      setErr(error.message);
+    } else {
+      setSent(true);
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="login-wrap">
+      <div className="hero-badge" style={{ marginBottom: 30 }}>✦ AI-Powered Medical Analysis</div>
+      <h1 className="hero-h1" style={{ marginBottom: 20 }}>
+        Welcome to<br/><span className="grad">MedBot</span>
+      </h1>
+      <p className="hero-sub" style={{ marginBottom: 40 }}>
+        Sign in with your email to get started. No password needed — we'll send you a magic link.
+      </p>
+
+      <div className="login-card">
+        <div className="login-icon">⚕</div>
+
+        {!sent ? (
+          <form onSubmit={handleSubmit}>
+            <div className="login-h">Sign In</div>
+            <div className="login-sub">Enter your email and we'll send a magic link</div>
+
+            <div className="field">
+              <label className={`field-label ${email || emailFocus ? 'up' : ''}`}>
+                Email address
+              </label>
+              <input className="field-input" type="email" value={email}
+                onChange={e => setEmail(e.target.value)}
+                onFocus={() => setEmailFocus(true)}
+                onBlur={() => setEmailFocus(false)}
+                placeholder={emailFocus ? 'you@example.com' : ''}
+                required
+              />
+            </div>
+
+            {err && (
+              <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,.08)',
+                border: '1px solid rgba(239,68,68,.2)', borderRadius: 10,
+                fontSize: 13, color: '#dc2626', marginBottom: 16 }}>
+                {err}
+              </div>
+            )}
+
+            <button className="btn" type="submit" disabled={busy || !email.trim()}
+              style={{ marginTop: 8 }}>
+              {busy ? 'Sending…' : 'Send Magic Link →'}
+            </button>
+          </form>
+        ) : (
+          <div>
+            <div className="login-h">Check your email</div>
+            <div className="login-sub" style={{ marginBottom: 20 }}>
+              We sent a magic link to <strong>{email}</strong>
+            </div>
+            <div className="login-sent">
+              📬 Click the link in your email to sign in
+              <div className="login-sent-sub">Didn't get it? Check your spam folder.</div>
+            </div>
+            <button className="btn-back-link" style={{ marginTop: 16 }}
+              onClick={() => { setSent(false); setEmail(''); }}>
+              ← Use a different email
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── App ────────────────────────────────────────────────────────────────── */
 function App() {
+  const { user, loading: authLoading, signIn, signOut } = useAuth();
   const [key, setKey] = useState(GEMINI_API_KEY);
   const [focused, setFocused] = useState(false);
   const [file, setFile] = useState(null);
@@ -1134,6 +1307,9 @@ function App() {
   const [consent, setConsent] = useState(false);
   const ref = useRef(null);
   const { list: toasts, add: toast } = useToast();
+
+  const authEnabled = !!supabase;
+  const isLoggedIn = !authEnabled || !!user;
 
   useEffect(() => {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -1205,14 +1381,36 @@ function App() {
           <div className="nav-logo-mark">⚕</div>
           MedBot
         </div>
-        <div className="nav-pill">
-          <div className="nav-dot"/>
-          Gemini 2.5 Flash
-        </div>
+        {isLoggedIn && user ? (
+          <div className="nav-user">
+            <span className="nav-email">{user.email}</span>
+            <button className="btn-logout" onClick={signOut}>Sign out</button>
+          </div>
+        ) : (
+          <div className="nav-pill">
+            <div className="nav-dot"/>
+            Gemini 2.5 Flash
+          </div>
+        )}
       </nav>
 
-      {/* Upload */}
-      {screen === 'upload' && (
+      {/* Auth loading */}
+      {authEnabled && authLoading && (
+        <div className="loading-wrap">
+          <div className="loading-card" style={{ padding: '48px 40px' }}>
+            <div className="spinner"/>
+            <div className="loading-sub">Checking authentication…</div>
+          </div>
+        </div>
+      )}
+
+      {/* Login screen — shown when auth is enabled but user is not logged in */}
+      {authEnabled && !authLoading && !user && (
+        <LoginScreen onSignIn={signIn}/>
+      )}
+
+      {/* Upload — shown when logged in (or auth disabled) */}
+      {isLoggedIn && !authLoading && screen === 'upload' && (
         <div className="hero">
           <div className="hero-badge">✦ AI-Powered Medical Analysis</div>
           <h1 className="hero-h1">Understand Your<br/><span className="grad">Medical Reports</span></h1>
@@ -1286,10 +1484,10 @@ function App() {
       )}
 
       {/* Loading */}
-      {screen === 'loading' && <LoadingScreen step={step}/>}
+      {isLoggedIn && screen === 'loading' && <LoadingScreen step={step}/>}
 
       {/* Analysis error */}
-      {screen === 'error' && (
+      {isLoggedIn && screen === 'error' && (
         <div className="loading-wrap">
           <div className="loading-card err-screen">
             <div className="err-icon">⚠️</div>
@@ -1306,12 +1504,12 @@ function App() {
       )}
 
       {/* Results */}
-      {screen === 'results' && result && (
+      {isLoggedIn && screen === 'results' && result && (
         <Results result={result} onReset={reset} apiKey={key} reportText={anonText}/>
       )}
 
       {/* Consent modal */}
-      {consent && (
+      {isLoggedIn && consent && (
         <ConsentModal
           preview={anonText}
           onConfirm={confirmConsent}
