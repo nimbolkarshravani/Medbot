@@ -20,9 +20,11 @@ const vars = {
 
 let html = fs.readFileSync('index.html', 'utf8');
 
-html = html.replace("const GEMINI_API_KEY = '';",    `const GEMINI_API_KEY = '${vars.GEMINI_API_KEY}';`);
-html = html.replace("const SUPABASE_URL = '';",      `const SUPABASE_URL = '${vars.SUPABASE_URL}';`);
-html = html.replace("const SUPABASE_ANON_KEY = '';",  `const SUPABASE_ANON_KEY = '${vars.SUPABASE_ANON_KEY}';`);
+function esc(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
+html = html.replace("const GEMINI_API_KEY = '';",    `const GEMINI_API_KEY = '${esc(vars.GEMINI_API_KEY)}';`);
+html = html.replace("const SUPABASE_URL = '';",      `const SUPABASE_URL = '${esc(vars.SUPABASE_URL)}';`);
+html = html.replace("const SUPABASE_ANON_KEY = '';",  `const SUPABASE_ANON_KEY = '${esc(vars.SUPABASE_ANON_KEY)}';`);
 
 fs.mkdirSync('dist', { recursive: true });
 fs.writeFileSync('dist/index.html', html);

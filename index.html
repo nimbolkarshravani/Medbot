@@ -645,6 +645,24 @@
 </head>
 <body>
 <div id="root"></div>
+<script>
+window.onerror = function(msg, src, line, col, err) {
+  var el = document.getElementById('root');
+  el.innerHTML = '<div style="padding:40px;font-family:monospace;color:#ef4444;max-width:800px;margin:40px auto">' +
+    '<h2 style="color:#0f172a">MedBot failed to load</h2>' +
+    '<p style="margin-top:12px"><b>Error:</b> ' + msg + '</p>' +
+    '<p><b>Source:</b> ' + (src||'inline') + ' line ' + line + '</p>' +
+    '<p style="margin-top:12px;color:#64748b">Check browser console (F12) for details.</p></div>';
+};
+setTimeout(function() {
+  var el = document.getElementById('root');
+  if (el && !el.hasChildNodes()) {
+    el.innerHTML = '<div style="padding:40px;font-family:monospace;max-width:800px;margin:40px auto">' +
+      '<h2>MedBot is loading...</h2>' +
+      '<p style="margin-top:12px;color:#64748b">If this message stays, a CDN script may have failed to load. Open browser console (F12) for details.</p></div>';
+  }
+}, 5000);
+</script>
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
