@@ -1,6 +1,10 @@
+// build.js — injects env vars into the (already pre-compiled) index.html.
+// NO external dependencies, NO Babel: this step cannot fail on Vercel.
+// index.html is committed fully compiled (JSX -> React.createElement, no Babel CDN).
+// To re-generate index.html after editing the JSX source, run: node compile.js
+
 const fs = require('fs');
 const path = require('path');
-const babel = require('@babel/core');
 
 // Load .env file if it exists (local development)
 const envPath = path.join(__dirname, '.env');
@@ -19,31 +23,13 @@ const vars = {
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || '',
 };
 
-// Prefer the JSX source if present; fall back to the (already-compiled) index.html
-const srcFile = fs.existsSync('index.src.html') ? 'index.src.html' : 'index.html';
-let html = fs.readFileSync(srcFile, 'utf8');
+let html = fs.readFileSync('index.html', 'utf8');
 
-// Inject env vars
 function esc(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 
 html = html.replace("const GEMINI_API_KEY = '';",    `const GEMINI_API_KEY = '${esc(vars.GEMINI_API_KEY)}';`);
 html = html.replace("const SUPABASE_URL = '';",      `const SUPABASE_URL = '${esc(vars.SUPABASE_URL)}';`);
 html = html.replace("const SUPABASE_ANON_KEY = '';",  `const SUPABASE_ANON_KEY = '${esc(vars.SUPABASE_ANON_KEY)}';`);
-
-// Pre-compile JSX: extract <script type="text/babel"> content, compile, replace
-const babelTagRe = /<script type="text\/babel">([\s\S]*?)<\/script>/;
-const match = html.match(babelTagRe);
-if (match) {
-  const jsxCode = match[1];
-  const result = babel.transformSync(jsxCode, {
-    plugins: [['@babel/plugin-transform-react-jsx', { runtime: 'classic' }]],
-    filename: 'app.jsx',
-  });
-  html = html.replace(match[0], `<script>${result.code}<\/script>`);
-}
-
-// Remove Babel Standalone CDN (no longer needed)
-html = html.replace(/\s*<script src="https:\/\/unpkg\.com\/@babel\/standalone\/babel\.min\.js"><\/script>/, '');
 
 fs.mkdirSync('dist', { recursive: true });
 fs.writeFileSync('dist/index.html', html);
@@ -53,4 +39,3 @@ console.log(injected.length
   ? `✓ Injected: ${injected.join(', ')} → dist/index.html`
   : '⚠ No env vars set — app runs in local mode (manual API key, no auth)'
 );
-console.log('✓ JSX pre-compiled — no Babel needed in browser');
