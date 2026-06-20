@@ -5,5 +5,8 @@
     "api/index.py": {
       "runtime": "@vercel/python@4.3.0"
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" }
+  ]
 }

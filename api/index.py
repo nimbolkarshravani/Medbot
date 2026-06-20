@@ -1,42 +1,24 @@
 """
-MedBot API — runs as a Vercel Python serverless function.
-
-Vercel serves every request matching /api/* to this single FastAPI app
-(see the rewrite in vercel.json). Because the original path is preserved,
-all routes are defined with the /api prefix.
-
-Self-contained on purpose: Vercel treats each top-level file in /api as its
-own function entry point, so helper modules are inlined here to avoid
-accidental extra endpoints.
+MedBot API — Vercel Python serverless function.
+Handles auth (email OTP via Supabase REST API) and protected endpoints.
+All Supabase communication happens server-side — frontend has zero SDK code.
 """
 import os
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import httpx
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel
 from supabase import Client, create_client
 
-# ── Config (from Vercel environment variables) ─────────────────────────────
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "*")
 
-# ── App ────────────────────────────────────────────────────────────────────
-app = FastAPI(title="MedBot API", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[FRONTEND_URL] if FRONTEND_URL != "*" else ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-security = HTTPBearer()
+app = FastAPI(title="MedBot API", version="2.0.0")
 
 _client: Client | None = None
 
@@ -44,45 +26,108 @@ _client: Client | None = None
 def get_db() -> Client:
     global _client
     if _client is None:
-        _client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        _client = create_client(SUPABASE_URL, SUPABASE_KEY or SUPABASE_ANON_KEY)
     return _client
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> dict:
-    token = credentials.credentials
+def _get_user(request: Request) -> dict:
+    token = request.cookies.get("medbot_token")
+    if not token:
+        auth = request.headers.get("authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated",
+            token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated"
         )
     except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    uid = payload.get("sub")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Token missing user ID")
+    return {"id": uid, "email": payload.get("email", "")}
+
+
+# ── Auth ─────────────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    email: str
+
+
+class VerifyRequest(BaseModel):
+    email: str
+    token: str
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: LoginRequest):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/auth/v1/otp",
+            json={"email": body.email, "create_user": True},
+            headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
         )
+    if resp.status_code >= 400:
+        detail = "Failed to send verification email"
+        try:
+            detail = resp.json().get("msg", detail)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=detail)
+    return {"message": "Check your email for a verification code"}
 
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing user ID",
+
+@app.post("/api/auth/verify")
+async def auth_verify(body: VerifyRequest):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/auth/v1/verify",
+            json={"email": body.email, "token": body.token, "type": "email"},
+            headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
         )
-    return {"id": user_id, "email": payload.get("email", "")}
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=401, detail="Invalid or expired code")
+    data = resp.json()
+    access_token = data.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=500, detail="No access token received")
+    user = data.get("user", {})
+    response = JSONResponse(
+        {"user": {"id": user.get("id", ""), "email": user.get("email", "")}}
+    )
+    response.set_cookie(
+        "medbot_token",
+        access_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=data.get("expires_in", 3600),
+        path="/",
+    )
+    return response
 
 
-# ── Public ─────────────────────────────────────────────────────────────────
+@app.post("/api/auth/logout")
+async def auth_logout():
+    response = JSONResponse({"message": "Logged out"})
+    response.delete_cookie("medbot_token", path="/")
+    return response
+
+
+# ── Public ───────────────────────────────────────────────────────────────
+
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
-# ── Protected ──────────────────────────────────────────────────────────────
+# ── Protected ────────────────────────────────────────────────────────────
+
 @app.get("/api/me")
-def get_me(user: dict = Depends(get_current_user)):
+def get_me(request: Request):
+    user = _get_user(request)
     return {"id": user["id"], "email": user["email"]}
 
 
@@ -92,22 +137,26 @@ class ReportCreate(BaseModel):
 
 
 @app.post("/api/reports")
-def create_report(body: ReportCreate, user: dict = Depends(get_current_user)):
+def create_report(body: ReportCreate, request: Request):
+    user = _get_user(request)
     db = get_db()
     result = (
         db.table("reports")
-        .insert({
-            "patient_id": user["id"],
-            "file_name": body.file_name,
-            "source_type": body.source_type,
-        })
+        .insert(
+            {
+                "patient_id": user["id"],
+                "file_name": body.file_name,
+                "source_type": body.source_type,
+            }
+        )
         .execute()
     )
     return {"report": result.data[0] if result.data else None}
 
 
 @app.get("/api/reports")
-def list_reports(user: dict = Depends(get_current_user)):
+def list_reports(request: Request):
+    user = _get_user(request)
     db = get_db()
     result = (
         db.table("reports")

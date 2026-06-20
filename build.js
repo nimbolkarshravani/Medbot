@@ -17,25 +17,18 @@ if (fs.existsSync(envPath)) {
     });
 }
 
-const vars = {
-  GEMINI_API_KEY:    process.env.GEMINI_API_KEY    || '',
-  SUPABASE_URL:      process.env.SUPABASE_URL      || '',
-  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || '',
-};
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 let html = fs.readFileSync('index.html', 'utf8');
 
 function esc(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 
-html = html.replace("const GEMINI_API_KEY = '';",    `const GEMINI_API_KEY = '${esc(vars.GEMINI_API_KEY)}';`);
-html = html.replace("const SUPABASE_URL = '';",      `const SUPABASE_URL = '${esc(vars.SUPABASE_URL)}';`);
-html = html.replace("const SUPABASE_ANON_KEY = '';",  `const SUPABASE_ANON_KEY = '${esc(vars.SUPABASE_ANON_KEY)}';`);
+html = html.replace("const GEMINI_API_KEY = '';", `const GEMINI_API_KEY = '${esc(GEMINI_API_KEY)}';`);
 
 fs.mkdirSync('dist', { recursive: true });
 fs.writeFileSync('dist/index.html', html);
 
-const injected = Object.entries(vars).filter(([, v]) => v).map(([k]) => k);
-console.log(injected.length
-  ? `✓ Injected: ${injected.join(', ')} → dist/index.html`
-  : '⚠ No env vars set — app runs in local mode (manual API key, no auth)'
+console.log(GEMINI_API_KEY
+  ? '✓ Injected GEMINI_API_KEY → dist/index.html'
+  : '⚠ No GEMINI_API_KEY — user will enter it manually'
 );
