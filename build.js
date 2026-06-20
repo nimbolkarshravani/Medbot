@@ -19,7 +19,9 @@ const vars = {
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || '',
 };
 
-let html = fs.readFileSync('index.html', 'utf8');
+// Prefer the JSX source if present; fall back to the (already-compiled) index.html
+const srcFile = fs.existsSync('index.src.html') ? 'index.src.html' : 'index.html';
+let html = fs.readFileSync(srcFile, 'utf8');
 
 // Inject env vars
 function esc(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }

@@ -7,6 +7,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     :root {
       --teal:       #14b8a6;
@@ -661,12 +662,8 @@ setTimeout(function() {
   }
 }, 5000);
 </script>
-<script>const {
-  useState,
-  useEffect,
-  useRef,
-  useCallback
-} = React;
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
 
 /* ── Config — injected at build time by build.js ────────────────────────── */
 const GEMINI_API_KEY = '';
@@ -680,31 +677,16 @@ try {
   if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase) {
     supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   }
-} catch (e) {
-  console.error('Supabase init failed:', e);
-}
+} catch (e) { console.error('Supabase init failed:', e); }
 
 /* ── Backend API (same origin, served by Vercel serverless under /api) ── */
 const API_BASE = '/api';
+
 async function apiFetch(path, options = {}) {
-  const {
-    data: {
-      session
-    }
-  } = supabase ? await supabase.auth.getSession() : {
-    data: {
-      session: null
-    }
-  };
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(options.headers || {})
-  };
+  const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers
-  });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
   return res.json();
 }
@@ -713,103 +695,62 @@ async function apiFetch(path, options = {}) {
 function useAuth() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
-    supabase.auth.getSession().then(({
-      data: {
-        session
-      }
-    }) => {
+    if (!supabase) { setLoading(false); return; }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoading(false);
     });
-    const {
-      data: {
-        subscription
-      }
-    } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null));
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => setUser(session?.user ?? null)
+    );
     return () => subscription.unsubscribe();
   }, []);
-  const signIn = async email => {
-    const {
-      error
-    } = await supabase.auth.signInWithOtp({
+
+  const signIn = async (email) => {
+    const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: {
-        emailRedirectTo: window.location.origin
-      }
+      options: { emailRedirectTo: window.location.origin },
     });
-    return {
-      error
-    };
+    return { error };
   };
+
   const signOut = async () => {
     await supabase.auth.signOut();
     setUser(null);
   };
-  return {
-    user,
-    loading,
-    signIn,
-    signOut
-  };
+
+  return { user, loading, signIn, signOut };
 }
 
 /* ── PII patterns ─────────────────────────────────────────────────────── */
-const PII = [{
-  r: /\b(Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g,
-  t: '[NAME]'
-}, {
-  r: /\b[A-Z][a-z]+ [A-Z][a-z]+\b(?=\s*,?\s*(?:MD|DO|RN|PhD|NP|PA))/g,
-  t: '[PROVIDER]'
-}, {
-  r: /\b(?:SSN|Social Security(?:\s+Number)?)[\s:#]*\d{3}[-\s]?\d{2}[-\s]?\d{4}/gi,
-  t: '[SSN]'
-}, {
-  r: /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b(?!\d)/g,
-  t: '[SSN]'
-}, {
-  r: /\bMRN[\s:#]*[A-Z0-9\-]+/gi,
-  t: '[MRN]'
-}, {
-  r: /\bPatient\s+(?:ID|Number)[\s:#]*[A-Z0-9\-]+/gi,
-  t: '[PATIENT-ID]'
-}, {
-  r: /\b(?:\+1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g,
-  t: '[PHONE]'
-}, {
-  r: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g,
-  t: '[EMAIL]'
-}, {
-  r: /\b\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl)\b(?:[^,\n]{0,40})?/gi,
-  t: '[ADDRESS]'
-}, {
-  r: /\b(?:DOB|Date of Birth|Birth Date|Born(?:\s+on)?)[\s:]*(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b/gi,
-  t: '[DOB]'
-}, {
-  r: /\b(?:0[1-9]|1[0-2])[\/\-](?:0[1-9]|[12]\d|3[01])[\/\-](?:19|20)\d{2}\b/g,
-  t: '[DOB]'
-}, {
-  r: /\b(?:Memorial|General|Community|Regional|University|St\.?\s+[A-Z][a-z]+|[A-Z][a-z]+ Medical|[A-Z][a-z]+ Health(?:care)?)\s+(?:Hospital|Clinic|Medical Center|Health System|Health Center|Centre)\b/gi,
-  t: '[FACILITY]'
-}];
+const PII = [
+  { r: /\b(Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g, t: '[NAME]' },
+  { r: /\b[A-Z][a-z]+ [A-Z][a-z]+\b(?=\s*,?\s*(?:MD|DO|RN|PhD|NP|PA))/g, t: '[PROVIDER]' },
+  { r: /\b(?:SSN|Social Security(?:\s+Number)?)[\s:#]*\d{3}[-\s]?\d{2}[-\s]?\d{4}/gi, t: '[SSN]' },
+  { r: /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b(?!\d)/g, t: '[SSN]' },
+  { r: /\bMRN[\s:#]*[A-Z0-9\-]+/gi, t: '[MRN]' },
+  { r: /\bPatient\s+(?:ID|Number)[\s:#]*[A-Z0-9\-]+/gi, t: '[PATIENT-ID]' },
+  { r: /\b(?:\+1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g, t: '[PHONE]' },
+  { r: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g, t: '[EMAIL]' },
+  { r: /\b\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl)\b(?:[^,\n]{0,40})?/gi, t: '[ADDRESS]' },
+  { r: /\b(?:DOB|Date of Birth|Birth Date|Born(?:\s+on)?)[\s:]*(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b/gi, t: '[DOB]' },
+  { r: /\b(?:0[1-9]|1[0-2])[\/\-](?:0[1-9]|[12]\d|3[01])[\/\-](?:19|20)\d{2}\b/g, t: '[DOB]' },
+  { r: /\b(?:Memorial|General|Community|Regional|University|St\.?\s+[A-Z][a-z]+|[A-Z][a-z]+ Medical|[A-Z][a-z]+ Health(?:care)?)\s+(?:Hospital|Clinic|Medical Center|Health System|Health Center|Centre)\b/gi, t: '[FACILITY]' },
+];
+
 function redact(text) {
   let out = text;
-  for (const {
-    r,
-    t
-  } of PII) out = out.replace(new RegExp(r.source, r.flags), t);
+  for (const { r, t } of PII) out = out.replace(new RegExp(r.source, r.flags), t);
   return out;
 }
+
 function highlight(text) {
-  let out = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  for (const {
-    r,
-    t
-  } of PII) {
+  let out = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  for (const { r, t } of PII) {
     out = out.replace(new RegExp(r.source, r.flags), `<mark class="pii">${t}</mark>`);
   }
   return out;
@@ -817,15 +758,15 @@ function highlight(text) {
 
 /* ── Error classification ───────────────────────────────────────────────── */
 function isRetryable(err) {
-  return /503|429|overload|high.?demand|busy|quota|rate.?limit|too.?many|unavailable/i.test(err.message || '');
+  return /503|429|overload|high.?demand|busy|quota|rate.?limit|too.?many|unavailable/i.test(
+    err.message || ''
+  );
 }
 
 /* ── PDF / text extraction ─────────────────────────────────────────────── */
 async function readPDF(file) {
   const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({
-    data: buf
-  }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
@@ -834,13 +775,14 @@ async function readPDF(file) {
   }
   return pages.join('\n');
 }
+
 async function readFile(file) {
   const ext = file.name.split('.').pop().toLowerCase();
   return ext === 'pdf' ? readPDF(file) : file.text();
 }
 
 /* ── Gemini API ─────────────────────────────────────────────────────────── */
-const PROMPT = report => `You are a warm, friendly doctor explaining medical results in simple language a patient can understand. Analyze this medical report.
+const PROMPT = (report) => `You are a warm, friendly doctor explaining medical results in simple language a patient can understand. Analyze this medical report.
 Reply ONLY with valid JSON (no markdown fences, no extra text) matching this exact structure:
 {
   "reportType": "short report type",
@@ -857,24 +799,19 @@ Rules: max 6 findings, prioritize critical first, plain English throughout, no j
 
 Medical Report:
 ${report}`;
+
 async function callGemini(apiKey, text) {
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{
-          text: PROMPT(text)
-        }]
-      }],
-      generationConfig: {
-        temperature: 0.25,
-        maxOutputTokens: 2048
-      }
-    })
-  });
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: PROMPT(text) }] }],
+        generationConfig: { temperature: 0.25, maxOutputTokens: 2048 }
+      })
+    }
+  );
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
     throw new Error(e.error?.message || `HTTP ${res.status}`);
@@ -888,45 +825,42 @@ async function callGemini(apiKey, text) {
 
 /* ── Gemini Chat API ────────────────────────────────────────────────────── */
 function buildChatContext(reportText, analysis) {
-  const findings = analysis.findings.map(f => `  • [${f.category.toUpperCase()}] ${f.title}: ${f.description}`).join('\n');
-  return [`You are a warm, friendly doctor helping a patient understand their medical report.`, `Answer in plain English. Keep answers to 3 sentences max. Be reassuring but honest.`, `Never diagnose or prescribe — always recommend seeing a real doctor for serious concerns.`, ``, `PATIENT'S REPORT SUMMARY:`, `Type: ${analysis.reportType}`, `Health score: ${analysis.healthScore}/10`, `Overview: ${analysis.summary}`, `Key findings:\n${findings}`, `Recommended actions: ${analysis.actions.join('; ')}`, ``, `ANONYMIZED REPORT TEXT (first 2500 chars):`, reportText.slice(0, 2500)].join('\n');
+  const findings = analysis.findings
+    .map(f => `  • [${f.category.toUpperCase()}] ${f.title}: ${f.description}`)
+    .join('\n');
+  return [
+    `You are a warm, friendly doctor helping a patient understand their medical report.`,
+    `Answer in plain English. Keep answers to 3 sentences max. Be reassuring but honest.`,
+    `Never diagnose or prescribe — always recommend seeing a real doctor for serious concerns.`,
+    ``,
+    `PATIENT'S REPORT SUMMARY:`,
+    `Type: ${analysis.reportType}`,
+    `Health score: ${analysis.healthScore}/10`,
+    `Overview: ${analysis.summary}`,
+    `Key findings:\n${findings}`,
+    `Recommended actions: ${analysis.actions.join('; ')}`,
+    ``,
+    `ANONYMIZED REPORT TEXT (first 2500 chars):`,
+    reportText.slice(0, 2500),
+  ].join('\n');
 }
+
 async function callGeminiChat(apiKey, reportText, analysis, history, question) {
   const ctx = buildChatContext(reportText, analysis);
-  const contents = [{
-    role: 'user',
-    parts: [{
-      text: ctx + '\n\nThe patient will now ask follow-up questions.'
-    }]
-  }, {
-    role: 'model',
-    parts: [{
-      text: "I've reviewed the report. I'm here to help — feel free to ask anything."
-    }]
-  }, ...history.map(m => ({
-    role: m.role === 'user' ? 'user' : 'model',
-    parts: [{
-      text: m.text
-    }]
-  })), {
-    role: 'user',
-    parts: [{
-      text: question
-    }]
-  }];
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      contents,
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 512
-      }
-    })
-  });
+  const contents = [
+    { role: 'user',  parts: [{ text: ctx + '\n\nThe patient will now ask follow-up questions.' }] },
+    { role: 'model', parts: [{ text: "I've reviewed the report. I'm here to help — feel free to ask anything." }] },
+    ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }] })),
+    { role: 'user',  parts: [{ text: question }] },
+  ];
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents, generationConfig: { temperature: 0.7, maxOutputTokens: 512 } })
+    }
+  );
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
     throw new Error(e.error?.message || `HTTP ${res.status}`);
@@ -940,248 +874,176 @@ function useToast() {
   const [list, setList] = useState([]);
   const add = useCallback((msg, type = 'info') => {
     const id = Date.now();
-    setList(p => [...p, {
-      id,
-      msg,
-      type
-    }]);
+    setList(p => [...p, { id, msg, type }]);
     setTimeout(() => setList(p => p.filter(t => t.id !== id)), 3600);
   }, []);
-  return {
-    list,
-    add
-  };
+  return { list, add };
 }
 
 /* ── Severity ring ──────────────────────────────────────────────────────── */
-function Ring({
-  score
-}) {
-  const R = 52,
-    C = 2 * Math.PI * R;
+function Ring({ score }) {
+  const R = 52, C = 2 * Math.PI * R;
   const dash = C * (score / 10);
-  return /*#__PURE__*/React.createElement("div", {
-    className: "sev-ring"
-  }, /*#__PURE__*/React.createElement("svg", {
-    width: "130",
-    height: "130",
-    viewBox: "0 0 130 130"
-  }, /*#__PURE__*/React.createElement("circle", {
-    cx: "65",
-    cy: "65",
-    r: R,
-    fill: "none",
-    stroke: "rgba(255,255,255,.22)",
-    strokeWidth: "10"
-  }), /*#__PURE__*/React.createElement("circle", {
-    cx: "65",
-    cy: "65",
-    r: R,
-    fill: "none",
-    stroke: "#fff",
-    strokeWidth: "10",
-    strokeDasharray: `${dash} ${C}`,
-    strokeLinecap: "round",
-    style: {
-      transition: 'stroke-dasharray 1.6s cubic-bezier(.22,1,.36,1)'
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "sev-num-wrap"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "sev-num"
-  }, score), /*#__PURE__*/React.createElement("span", {
-    className: "sev-denom"
-  }, "/10")));
+  return (
+    <div className="sev-ring">
+      <svg width="130" height="130" viewBox="0 0 130 130">
+        <circle cx="65" cy="65" r={R} fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="10"/>
+        <circle cx="65" cy="65" r={R} fill="none" stroke="#fff" strokeWidth="10"
+          strokeDasharray={`${dash} ${C}`} strokeLinecap="round"
+          style={{ transition: 'stroke-dasharray 1.6s cubic-bezier(.22,1,.36,1)' }}/>
+      </svg>
+      <div className="sev-num-wrap">
+        <span className="sev-num">{score}</span>
+        <span className="sev-denom">/10</span>
+      </div>
+    </div>
+  );
 }
 
 /* ── Consent modal ──────────────────────────────────────────────────────── */
-function ConsentModal({
-  preview,
-  onConfirm,
-  onCancel
-}) {
-  const [c, setC] = useState({
-    a: false,
-    b: false,
-    d: false
-  });
+function ConsentModal({ preview, onConfirm, onCancel }) {
+  const [c, setC] = useState({ a: false, b: false, d: false });
   const done = Object.values(c).every(Boolean);
   const count = Object.values(c).filter(Boolean).length;
-  const tog = k => setC(p => ({
-    ...p,
-    [k]: !p[k]
-  }));
-  const rows = [{
-    k: 'a',
-    label: 'PII Auto-Redaction',
-    desc: 'Names, phone, email, addresses, SSN, MRN, dates of birth, and facility names are removed before AI processing.'
-  }, {
-    k: 'b',
-    label: 'AI Analysis',
-    desc: 'The anonymized text will be sent to Google Gemini 2.5 Flash for medical report analysis.'
-  }, {
-    k: 'd',
-    label: 'Informed Consent',
-    desc: 'This tool provides educational analysis only and is not a substitute for professional medical advice.'
-  }];
-  return /*#__PURE__*/React.createElement("div", {
-    className: "overlay"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "modal"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "modal-icon"
-  }, "🔒"), /*#__PURE__*/React.createElement("div", {
-    className: "modal-h"
-  }, "Privacy & Consent"), /*#__PURE__*/React.createElement("div", {
-    className: "modal-sub"
-  }, "Review how your report is anonymized before we send it for analysis. PII is highlighted in red below."), /*#__PURE__*/React.createElement("div", {
-    className: "prog-wrap"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "prog-bar",
-    style: {
-      width: `${count / 3 * 100}%`
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "preview-label"
-  }, "Anonymized Preview"), /*#__PURE__*/React.createElement("div", {
-    className: "preview-box",
-    dangerouslySetInnerHTML: {
-      __html: highlight(preview.slice(0, 620) + (preview.length > 620 ? '…' : ''))
-    }
-  }), rows.map(({
-    k,
-    label,
-    desc
-  }) => /*#__PURE__*/React.createElement("div", {
-    key: k,
-    className: `consent-row ${c[k] ? 'on' : ''}`,
-    onClick: () => tog(k)
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `cb ${c[k] ? 'on' : ''}`
-  }, c[k] ? '✓' : ''), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "ct-label"
-  }, label), /*#__PURE__*/React.createElement("div", {
-    className: "ct-desc"
-  }, desc)))), /*#__PURE__*/React.createElement("div", {
-    className: "modal-btns"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn-ghost",
-    onClick: onCancel
-  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
-    className: "btn-confirm",
-    onClick: onConfirm,
-    disabled: !done
-  }, done ? 'Analyze Report →' : `${3 - count} consent${3 - count !== 1 ? 's' : ''} left`))));
+  const tog = k => setC(p => ({ ...p, [k]: !p[k] }));
+
+  const rows = [
+    { k: 'a', label: 'PII Auto-Redaction', desc: 'Names, phone, email, addresses, SSN, MRN, dates of birth, and facility names are removed before AI processing.' },
+    { k: 'b', label: 'AI Analysis', desc: 'The anonymized text will be sent to Google Gemini 2.5 Flash for medical report analysis.' },
+    { k: 'd', label: 'Informed Consent', desc: 'This tool provides educational analysis only and is not a substitute for professional medical advice.' },
+  ];
+
+  return (
+    <div className="overlay">
+      <div className="modal">
+        <div className="modal-icon">🔒</div>
+        <div className="modal-h">Privacy & Consent</div>
+        <div className="modal-sub">
+          Review how your report is anonymized before we send it for analysis.
+          PII is highlighted in red below.
+        </div>
+
+        <div className="prog-wrap">
+          <div className="prog-bar" style={{ width: `${(count / 3) * 100}%` }}/>
+        </div>
+
+        <div className="preview-label">Anonymized Preview</div>
+        <div className="preview-box"
+          dangerouslySetInnerHTML={{ __html: highlight(preview.slice(0, 620) + (preview.length > 620 ? '…' : '')) }}/>
+
+        {rows.map(({ k, label, desc }) => (
+          <div key={k} className={`consent-row ${c[k] ? 'on' : ''}`} onClick={() => tog(k)}>
+            <div className={`cb ${c[k] ? 'on' : ''}`}>{c[k] ? '✓' : ''}</div>
+            <div>
+              <div className="ct-label">{label}</div>
+              <div className="ct-desc">{desc}</div>
+            </div>
+          </div>
+        ))}
+
+        <div className="modal-btns">
+          <button className="btn-ghost" onClick={onCancel}>Cancel</button>
+          <button className="btn-confirm" onClick={onConfirm} disabled={!done}>
+            {done ? 'Analyze Report →' : `${3 - count} consent${3 - count !== 1 ? 's' : ''} left`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ── Loading screen ─────────────────────────────────────────────────────── */
-const STEPS = ['Reading & extracting text', 'Anonymizing personal data', 'Connecting to AI doctor', 'Generating AI analysis', 'Preparing your report'];
-function LoadingScreen({
-  step
-}) {
-  return /*#__PURE__*/React.createElement("div", {
-    className: "loading-wrap"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "loading-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "spinner"
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "loading-h"
-  }, "MedBot is reviewing", /*#__PURE__*/React.createElement("br", null), "your report"), /*#__PURE__*/React.createElement("div", {
-    className: "loading-sub"
-  }, "Anonymizing & analyzing in real-time"), /*#__PURE__*/React.createElement("ul", {
-    className: "steps"
-  }, STEPS.map((s, i) => /*#__PURE__*/React.createElement("li", {
-    key: i,
-    className: `step ${i === step ? 'active' : i < step ? 'done' : ''}`
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "step-dot"
-  }), /*#__PURE__*/React.createElement("span", null, i < step ? '✓ ' : '', s))))));
+const STEPS = [
+  'Reading & extracting text',
+  'Anonymizing personal data',
+  'Connecting to AI doctor',
+  'Generating AI analysis',
+  'Preparing your report',
+];
+
+function LoadingScreen({ step }) {
+  return (
+    <div className="loading-wrap">
+      <div className="loading-card">
+        <div className="spinner"/>
+        <div className="loading-h">MedBot is reviewing<br/>your report</div>
+        <div className="loading-sub">Anonymizing & analyzing in real-time</div>
+        <ul className="steps">
+          {STEPS.map((s, i) => (
+            <li key={i} className={`step ${i === step ? 'active' : i < step ? 'done' : ''}`}>
+              <div className="step-dot"/>
+              <span>{i < step ? '✓ ' : ''}{s}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
 }
 
 /* ── Chat component ─────────────────────────────────────────────────────── */
-const SUGGESTIONS = ["Should I be worried about these results?", "What does this mean for my daily life?", "How can I improve my health score?", "Do I need to see a doctor urgently?", "What does LDL mean?", "How can I lower my cholesterol?"];
-function Chat({
-  apiKey,
-  reportText,
-  analysis
-}) {
-  const [msgs, setMsgs] = useState([]);
+const SUGGESTIONS = [
+  "Should I be worried about these results?",
+  "What does this mean for my daily life?",
+  "How can I improve my health score?",
+  "Do I need to see a doctor urgently?",
+  "What does LDL mean?",
+  "How can I lower my cholesterol?",
+];
+
+function Chat({ apiKey, reportText, analysis }) {
+  const [msgs, setMsgs]   = useState([]);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const bottomRef = useRef(null);
+  const [busy, setBusy]   = useState(false);
+  const bottomRef  = useRef(null);
   const textareaRef = useRef(null);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({
-      behavior: 'smooth'
-    });
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs, busy]);
-  const send = async text => {
+
+  const send = async (text) => {
     const q = (text ?? input).trim();
     if (!q || busy) return;
     setInput('');
     setBusy(true);
     const snapshot = [...msgs];
-    setMsgs(p => [...p, {
-      role: 'user',
-      text: q
-    }]);
+    setMsgs(p => [...p, { role: 'user', text: q }]);
     try {
       const reply = await callGeminiChat(apiKey, reportText, analysis, snapshot, q);
-      setMsgs(p => [...p, {
-        role: 'bot',
-        text: reply
-      }]);
+      setMsgs(p => [...p, { role: 'bot', text: reply }]);
     } catch (e) {
       if (isRetryable(e)) {
-        setMsgs(p => [...p, {
-          role: 'error',
-          question: q,
-          snapshot
-        }]);
+        setMsgs(p => [...p, { role: 'error', question: q, snapshot }]);
       } else {
-        setMsgs(p => [...p, {
-          role: 'bot',
-          text: `Sorry, something went wrong: ${e.message}`
-        }]);
+        setMsgs(p => [...p, { role: 'bot', text: `Sorry, something went wrong: ${e.message}` }]);
       }
     } finally {
       setBusy(false);
       setTimeout(() => textareaRef.current?.focus(), 50);
     }
   };
+
   const retryChat = async (question, snapshot) => {
     setMsgs(p => p.filter(m => !(m.role === 'error' && m.question === question)));
     setBusy(true);
     try {
       const reply = await callGeminiChat(apiKey, reportText, analysis, snapshot, question);
-      setMsgs(p => [...p, {
-        role: 'bot',
-        text: reply
-      }]);
+      setMsgs(p => [...p, { role: 'bot', text: reply }]);
     } catch (e) {
       if (isRetryable(e)) {
-        setMsgs(p => [...p, {
-          role: 'error',
-          question,
-          snapshot
-        }]);
+        setMsgs(p => [...p, { role: 'error', question, snapshot }]);
       } else {
-        setMsgs(p => [...p, {
-          role: 'bot',
-          text: `Sorry, something went wrong: ${e.message}`
-        }]);
+        setMsgs(p => [...p, { role: 'bot', text: `Sorry, something went wrong: ${e.message}` }]);
       }
     } finally {
       setBusy(false);
       setTimeout(() => textareaRef.current?.focus(), 50);
     }
   };
+
   const onKey = e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
   /* Auto-resize textarea */
@@ -1190,221 +1052,206 @@ function Chat({
     e.target.style.height = 'auto';
     e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
   };
-  const shownChips = msgs.length === 0 ? SUGGESTIONS // all 6 in empty state
-  : SUGGESTIONS.slice(0, 3); // 3 inline chips after chat starts
 
-  return /*#__PURE__*/React.createElement("div", {
-    className: "chat-section"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "chat-head"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "chat-head-icon"
-  }, "💬"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "chat-head-title"
-  }, "Ask MedBot"), /*#__PURE__*/React.createElement("div", {
-    className: "chat-head-sub"
-  }, "Follow-up questions about your report"))), msgs.length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "chat-suggestions"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "chat-hint"
-  }, "Tap a question to get started, or type your own below ↓"), /*#__PURE__*/React.createElement("div", {
-    className: "chips"
-  }, shownChips.map(s => /*#__PURE__*/React.createElement("button", {
-    key: s,
-    className: "chip",
-    onClick: () => send(s),
-    disabled: busy
-  }, s)))), msgs.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "chat-msgs"
-  }, msgs.map((m, i) => {
-    if (m.role === 'error') return /*#__PURE__*/React.createElement("div", {
-      key: i,
-      className: "msg bot"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "msg-av"
-    }, "👨‍⚕️"), /*#__PURE__*/React.createElement("div", {
-      className: "chat-err"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "chat-err-text"
-    }, "Gemini is busy right now. Please try again."), /*#__PURE__*/React.createElement("button", {
-      className: "btn-retry-chat",
-      onClick: () => retryChat(m.question, m.snapshot)
-    }, "🔄 Retry")));
-    return /*#__PURE__*/React.createElement("div", {
-      key: i,
-      className: `msg ${m.role}`
-    }, m.role === 'bot' && /*#__PURE__*/React.createElement("div", {
-      className: "msg-av"
-    }, "👨‍⚕️"), /*#__PURE__*/React.createElement("div", {
-      className: "msg-bubble"
-    }, m.text));
-  }), busy && /*#__PURE__*/React.createElement("div", {
-    className: "msg bot"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "msg-av"
-  }, "👨‍⚕️"), /*#__PURE__*/React.createElement("div", {
-    className: "msg-bubble typing-bub"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dot"
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "dot"
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "dot"
-  }))), /*#__PURE__*/React.createElement("div", {
-    ref: bottomRef
-  })), msgs.length > 0 && !busy && /*#__PURE__*/React.createElement("div", {
-    className: "chips-bar"
-  }, shownChips.map(s => /*#__PURE__*/React.createElement("button", {
-    key: s,
-    className: "chip",
-    onClick: () => send(s),
-    disabled: busy
-  }, s))), /*#__PURE__*/React.createElement("div", {
-    className: "chat-input-bar"
-  }, /*#__PURE__*/React.createElement("textarea", {
-    ref: textareaRef,
-    className: "chat-textarea",
-    rows: 1,
-    placeholder: "Ask anything about your report…",
-    value: input,
-    onInput: onInput,
-    onChange: e => setInput(e.target.value),
-    onKeyDown: onKey,
-    disabled: busy
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "chat-send",
-    onClick: () => send(),
-    disabled: busy || !input.trim(),
-    title: "Send"
-  }, busy ? '…' : '↑')));
+  const shownChips = msgs.length === 0
+    ? SUGGESTIONS                  // all 6 in empty state
+    : SUGGESTIONS.slice(0, 3);     // 3 inline chips after chat starts
+
+  return (
+    <div className="chat-section">
+      {/* Header */}
+      <div className="chat-head">
+        <div className="chat-head-icon">💬</div>
+        <div>
+          <div className="chat-head-title">Ask MedBot</div>
+          <div className="chat-head-sub">Follow-up questions about your report</div>
+        </div>
+      </div>
+
+      {/* Empty state — suggestions */}
+      {msgs.length === 0 && (
+        <div className="chat-suggestions">
+          <div className="chat-hint">Tap a question to get started, or type your own below ↓</div>
+          <div className="chips">
+            {shownChips.map(s => (
+              <button key={s} className="chip" onClick={() => send(s)} disabled={busy}>{s}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Message list */}
+      {msgs.length > 0 && (
+        <div className="chat-msgs">
+          {msgs.map((m, i) => {
+            if (m.role === 'error') return (
+              <div key={i} className="msg bot">
+                <div className="msg-av">👨‍⚕️</div>
+                <div className="chat-err">
+                  <div className="chat-err-text">Gemini is busy right now. Please try again.</div>
+                  <button className="btn-retry-chat" onClick={() => retryChat(m.question, m.snapshot)}>
+                    🔄 Retry
+                  </button>
+                </div>
+              </div>
+            );
+            return (
+              <div key={i} className={`msg ${m.role}`}>
+                {m.role === 'bot' && <div className="msg-av">👨‍⚕️</div>}
+                <div className="msg-bubble">{m.text}</div>
+              </div>
+            );
+          })}
+
+          {/* Typing indicator */}
+          {busy && (
+            <div className="msg bot">
+              <div className="msg-av">👨‍⚕️</div>
+              <div className="msg-bubble typing-bub">
+                <span className="dot"/><span className="dot"/><span className="dot"/>
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef}/>
+        </div>
+      )}
+
+      {/* Inline suggestion chips after first exchange */}
+      {msgs.length > 0 && !busy && (
+        <div className="chips-bar">
+          {shownChips.map(s => (
+            <button key={s} className="chip" onClick={() => send(s)} disabled={busy}>{s}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Sticky input bar */}
+      <div className="chat-input-bar">
+        <textarea
+          ref={textareaRef}
+          className="chat-textarea"
+          rows={1}
+          placeholder="Ask anything about your report…"
+          value={input}
+          onInput={onInput}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={onKey}
+          disabled={busy}
+        />
+        <button className="chat-send" onClick={() => send()} disabled={busy || !input.trim()} title="Send">
+          {busy ? '…' : '↑'}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /* ── Results screen ─────────────────────────────────────────────────────── */
-function Results({
-  result,
-  onReset,
-  apiKey,
-  reportText
-}) {
+function Results({ result, onReset, apiKey, reportText }) {
   const icon = cat => cat === 'critical' ? '🔴' : cat === 'warning' ? '🟡' : '🟢';
   const scoreLabel = s => s >= 8 ? 'Excellent Health' : s >= 6 ? 'Good Health' : s >= 4 ? 'Fair Health' : s >= 2 ? 'Poor Health' : 'Critical Condition';
+
   const crits = result.findings.filter(f => f.category === 'critical').length;
   const warns = result.findings.filter(f => f.category === 'warning').length;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "results-wrap"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "results-hdr"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "results-eyebrow"
-  }, result.reportType), /*#__PURE__*/React.createElement("div", {
-    className: "results-h"
-  }, "Your ", /*#__PURE__*/React.createElement("span", {
-    className: "grad"
-  }, "Analysis"), " Report")), /*#__PURE__*/React.createElement("button", {
-    className: "btn-reset",
-    onClick: onReset
-  }, "↩ Analyze Another")), /*#__PURE__*/React.createElement("div", {
-    className: "sev-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "dr-pill"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "dr-avatar"
-  }, "👨‍⚕️"), "MedBot · AI Medical Analysis"), /*#__PURE__*/React.createElement("div", {
-    className: "sev-row"
-  }, /*#__PURE__*/React.createElement(Ring, {
-    score: result.healthScore
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "sev-label"
-  }, "Overall Health Score"), /*#__PURE__*/React.createElement("div", {
-    className: "sev-title"
-  }, scoreLabel(result.healthScore)), /*#__PURE__*/React.createElement("div", {
-    className: "sev-summary"
-  }, result.summary), result.drAidenNote && /*#__PURE__*/React.createElement("div", {
-    className: "sev-note"
-  }, "\"", result.drAidenNote, "\""))), (crits > 0 || warns > 0) && /*#__PURE__*/React.createElement("div", {
-    className: "sev-counts"
-  }, crits > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "sev-count-pill c"
-  }, "🔴 ", crits, " Critical"), warns > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "sev-count-pill w"
-  }, "🟡 ", warns, " Warning"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 28
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "sec-hdr"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "sec-title"
-  }, "Key Findings"), /*#__PURE__*/React.createElement("div", {
-    className: "sec-badge"
-  }, result.findings.length, " finding", result.findings.length !== 1 ? 's' : '')), /*#__PURE__*/React.createElement("div", {
-    className: "findings"
-  }, result.findings.map((f, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "finding",
-    style: {
-      animationDelay: `${i * 0.09}s`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `f-icon ${f.category}`
-  }, icon(f.category)), /*#__PURE__*/React.createElement("div", {
-    className: "f-body"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `f-cat ${f.category}`
-  }, f.category), /*#__PURE__*/React.createElement("div", {
-    className: "f-title"
-  }, f.title), /*#__PURE__*/React.createElement("div", {
-    className: "f-desc"
-  }, f.description)), /*#__PURE__*/React.createElement("div", {
-    className: `f-badge ${f.category}`
-  }, f.category === 'critical' ? 'Urgent' : f.category === 'warning' ? 'Monitor' : 'Normal'))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "sec-hdr"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "sec-title"
-  }, "Recommended Actions"), /*#__PURE__*/React.createElement("div", {
-    className: "sec-badge"
-  }, "Top 3 steps")), /*#__PURE__*/React.createElement("div", {
-    className: "actions"
-  }, result.actions.slice(0, 3).map((a, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "action",
-    style: {
-      animationDelay: `${(result.findings.length + i) * 0.09}s`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "action-num"
-  }, i + 1), /*#__PURE__*/React.createElement("div", {
-    className: "action-text"
-  }, a))))), /*#__PURE__*/React.createElement("div", {
-    className: "disclaimer"
-  }, "⚕️ This analysis is for educational purposes only and does not constitute medical advice. Always consult a qualified healthcare professional for diagnosis and treatment."), /*#__PURE__*/React.createElement(Chat, {
-    apiKey: apiKey,
-    reportText: reportText,
-    analysis: result
-  }));
+
+  return (
+    <div className="results-wrap">
+      <div className="results-hdr">
+        <div>
+          <div className="results-eyebrow">{result.reportType}</div>
+          <div className="results-h">Your <span className="grad">Analysis</span> Report</div>
+        </div>
+        <button className="btn-reset" onClick={onReset}>↩ Analyze Another</button>
+      </div>
+
+      {/* Severity card */}
+      <div className="sev-card">
+        <div className="dr-pill">
+          <div className="dr-avatar">👨‍⚕️</div>
+          MedBot · AI Medical Analysis
+        </div>
+        <div className="sev-row">
+          <Ring score={result.healthScore}/>
+          <div style={{ flex: 1 }}>
+            <div className="sev-label">Overall Health Score</div>
+            <div className="sev-title">{scoreLabel(result.healthScore)}</div>
+            <div className="sev-summary">{result.summary}</div>
+            {result.drAidenNote && (
+              <div className="sev-note">"{result.drAidenNote}"</div>
+            )}
+          </div>
+        </div>
+        {(crits > 0 || warns > 0) && (
+          <div className="sev-counts">
+            {crits > 0 && <div className="sev-count-pill c">🔴 {crits} Critical</div>}
+            {warns > 0 && <div className="sev-count-pill w">🟡 {warns} Warning</div>}
+          </div>
+        )}
+      </div>
+
+      {/* Findings */}
+      <div style={{ marginBottom: 28 }}>
+        <div className="sec-hdr">
+          <div className="sec-title">Key Findings</div>
+          <div className="sec-badge">{result.findings.length} finding{result.findings.length !== 1 ? 's' : ''}</div>
+        </div>
+        <div className="findings">
+          {result.findings.map((f, i) => (
+            <div key={i} className="finding" style={{ animationDelay: `${i * 0.09}s` }}>
+              <div className={`f-icon ${f.category}`}>{icon(f.category)}</div>
+              <div className="f-body">
+                <div className={`f-cat ${f.category}`}>{f.category}</div>
+                <div className="f-title">{f.title}</div>
+                <div className="f-desc">{f.description}</div>
+              </div>
+              <div className={`f-badge ${f.category}`}>
+                {f.category === 'critical' ? 'Urgent' : f.category === 'warning' ? 'Monitor' : 'Normal'}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div>
+        <div className="sec-hdr">
+          <div className="sec-title">Recommended Actions</div>
+          <div className="sec-badge">Top 3 steps</div>
+        </div>
+        <div className="actions">
+          {result.actions.slice(0, 3).map((a, i) => (
+            <div key={i} className="action" style={{ animationDelay: `${(result.findings.length + i) * 0.09}s` }}>
+              <div className="action-num">{i + 1}</div>
+              <div className="action-text">{a}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="disclaimer">
+        ⚕️ This analysis is for educational purposes only and does not constitute medical advice.
+        Always consult a qualified healthcare professional for diagnosis and treatment.
+      </div>
+
+      {/* Chat */}
+      <Chat apiKey={apiKey} reportText={reportText} analysis={result}/>
+    </div>
+  );
 }
 
 /* ── Login screen ──────────────────────────────────────────────────────── */
-function LoginScreen({
-  onSignIn
-}) {
+function LoginScreen({ onSignIn }) {
   const [email, setEmail] = useState('');
   const [emailFocus, setEmailFocus] = useState(false);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const handleSubmit = async e => {
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!email.trim() || busy) return;
-    setBusy(true);
-    setErr('');
-    const {
-      error
-    } = await onSignIn(email.trim());
+    setBusy(true); setErr('');
+    const { error } = await onSignIn(email.trim());
     if (error) {
       setErr(error.message);
     } else {
@@ -1412,96 +1259,75 @@ function LoginScreen({
     }
     setBusy(false);
   };
-  return /*#__PURE__*/React.createElement("div", {
-    className: "login-wrap"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "hero-badge",
-    style: {
-      marginBottom: 30
-    }
-  }, "✦ AI-Powered Medical Analysis"), /*#__PURE__*/React.createElement("h1", {
-    className: "hero-h1",
-    style: {
-      marginBottom: 20
-    }
-  }, "Welcome to", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
-    className: "grad"
-  }, "MedBot")), /*#__PURE__*/React.createElement("p", {
-    className: "hero-sub",
-    style: {
-      marginBottom: 40
-    }
-  }, "Sign in with your email to get started. No password needed — we'll send you a magic link."), /*#__PURE__*/React.createElement("div", {
-    className: "login-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "login-icon"
-  }, "⚕"), !sent ? /*#__PURE__*/React.createElement("form", {
-    onSubmit: handleSubmit
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "login-h"
-  }, "Sign In"), /*#__PURE__*/React.createElement("div", {
-    className: "login-sub"
-  }, "Enter your email and we'll send a magic link"), /*#__PURE__*/React.createElement("div", {
-    className: "field"
-  }, /*#__PURE__*/React.createElement("label", {
-    className: `field-label ${email || emailFocus ? 'up' : ''}`
-  }, "Email address"), /*#__PURE__*/React.createElement("input", {
-    className: "field-input",
-    type: "email",
-    value: email,
-    onChange: e => setEmail(e.target.value),
-    onFocus: () => setEmailFocus(true),
-    onBlur: () => setEmailFocus(false),
-    placeholder: emailFocus ? 'you@example.com' : '',
-    required: true
-  })), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '10px 14px',
-      background: 'rgba(239,68,68,.08)',
-      border: '1px solid rgba(239,68,68,.2)',
-      borderRadius: 10,
-      fontSize: 13,
-      color: '#dc2626',
-      marginBottom: 16
-    }
-  }, err), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    type: "submit",
-    disabled: busy || !email.trim(),
-    style: {
-      marginTop: 8
-    }
-  }, busy ? 'Sending…' : 'Send Magic Link →')) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "login-h"
-  }, "Check your email"), /*#__PURE__*/React.createElement("div", {
-    className: "login-sub",
-    style: {
-      marginBottom: 20
-    }
-  }, "We sent a magic link to ", /*#__PURE__*/React.createElement("strong", null, email)), /*#__PURE__*/React.createElement("div", {
-    className: "login-sent"
-  }, "📬 Click the link in your email to sign in", /*#__PURE__*/React.createElement("div", {
-    className: "login-sent-sub"
-  }, "Didn't get it? Check your spam folder.")), /*#__PURE__*/React.createElement("button", {
-    className: "btn-back-link",
-    style: {
-      marginTop: 16
-    },
-    onClick: () => {
-      setSent(false);
-      setEmail('');
-    }
-  }, "← Use a different email"))));
+
+  return (
+    <div className="login-wrap">
+      <div className="hero-badge" style={{ marginBottom: 30 }}>✦ AI-Powered Medical Analysis</div>
+      <h1 className="hero-h1" style={{ marginBottom: 20 }}>
+        Welcome to<br/><span className="grad">MedBot</span>
+      </h1>
+      <p className="hero-sub" style={{ marginBottom: 40 }}>
+        Sign in with your email to get started. No password needed — we'll send you a magic link.
+      </p>
+
+      <div className="login-card">
+        <div className="login-icon">⚕</div>
+
+        {!sent ? (
+          <form onSubmit={handleSubmit}>
+            <div className="login-h">Sign In</div>
+            <div className="login-sub">Enter your email and we'll send a magic link</div>
+
+            <div className="field">
+              <label className={`field-label ${email || emailFocus ? 'up' : ''}`}>
+                Email address
+              </label>
+              <input className="field-input" type="email" value={email}
+                onChange={e => setEmail(e.target.value)}
+                onFocus={() => setEmailFocus(true)}
+                onBlur={() => setEmailFocus(false)}
+                placeholder={emailFocus ? 'you@example.com' : ''}
+                required
+              />
+            </div>
+
+            {err && (
+              <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,.08)',
+                border: '1px solid rgba(239,68,68,.2)', borderRadius: 10,
+                fontSize: 13, color: '#dc2626', marginBottom: 16 }}>
+                {err}
+              </div>
+            )}
+
+            <button className="btn" type="submit" disabled={busy || !email.trim()}
+              style={{ marginTop: 8 }}>
+              {busy ? 'Sending…' : 'Send Magic Link →'}
+            </button>
+          </form>
+        ) : (
+          <div>
+            <div className="login-h">Check your email</div>
+            <div className="login-sub" style={{ marginBottom: 20 }}>
+              We sent a magic link to <strong>{email}</strong>
+            </div>
+            <div className="login-sent">
+              📬 Click the link in your email to sign in
+              <div className="login-sent-sub">Didn't get it? Check your spam folder.</div>
+            </div>
+            <button className="btn-back-link" style={{ marginTop: 16 }}
+              onClick={() => { setSent(false); setEmail(''); }}>
+              ← Use a different email
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /* ── App ────────────────────────────────────────────────────────────────── */
 function App() {
-  const {
-    user,
-    loading: authLoading,
-    signIn,
-    signOut
-  } = useAuth();
+  const { user, loading: authLoading, signIn, signOut } = useAuth();
   const [key, setKey] = useState(GEMINI_API_KEY);
   const [focused, setFocused] = useState(false);
   const [file, setFile] = useState(null);
@@ -1512,35 +1338,31 @@ function App() {
   const [anonText, setAnonText] = useState('');
   const [consent, setConsent] = useState(false);
   const ref = useRef(null);
-  const {
-    list: toasts,
-    add: toast
-  } = useToast();
+  const { list: toasts, add: toast } = useToast();
+
   const authEnabled = !!supabase;
   const isLoggedIn = !authEnabled || !!user;
+
   useEffect(() => {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }, []);
-  const pickFile = useCallback(f => {
+
+  const pickFile = useCallback((f) => {
     if (!f) return;
     const ext = f.name.split('.').pop().toLowerCase();
-    if (!['pdf', 'txt'].includes(ext)) {
-      toast('Please upload a PDF or TXT file.', 'error');
-      return;
-    }
-    if (f.size > 20 * 1024 * 1024) {
-      toast('File too large — max 20 MB.', 'error');
-      return;
-    }
+    if (!['pdf', 'txt'].includes(ext)) { toast('Please upload a PDF or TXT file.', 'error'); return; }
+    if (f.size > 20 * 1024 * 1024) { toast('File too large — max 20 MB.', 'error'); return; }
     setFile(f);
     toast(`${f.name} ready`, 'success');
   }, [toast]);
+
   const canGo = key.trim().length > 8 && file !== null;
+
   const begin = async () => {
     if (!canGo) return;
     try {
-      setStep(0);
-      setScreen('loading');
+      setStep(0); setScreen('loading');
       const raw = await readFile(file);
       setStep(1);
       const anon = redact(raw);
@@ -1555,9 +1377,8 @@ function App() {
   };
 
   /* Extracted so both confirmConsent and the Retry button can call it */
-  const runAnalysis = useCallback(async textToAnalyze => {
-    setScreen('loading');
-    setStep(2);
+  const runAnalysis = useCallback(async (textToAnalyze) => {
+    setScreen('loading'); setStep(2);
     try {
       await new Promise(r => setTimeout(r, 400));
       setStep(3);
@@ -1576,174 +1397,172 @@ function App() {
       }
     }
   }, [key]);
+
   const confirmConsent = async () => {
     setConsent(false);
     await runAnalysis(anonText);
   };
-  const reset = () => {
-    setScreen('upload');
-    setFile(null);
-    setResult(null);
-    setAnonText('');
-    setStep(0);
-  };
-  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("nav", {
-    className: "nav"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "nav-logo"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "nav-logo-mark"
-  }, "⚕"), "MedBot"), isLoggedIn && user ? /*#__PURE__*/React.createElement("div", {
-    className: "nav-user"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "nav-email"
-  }, user.email), /*#__PURE__*/React.createElement("button", {
-    className: "btn-logout",
-    onClick: signOut
-  }, "Sign out")) : /*#__PURE__*/React.createElement("div", {
-    className: "nav-pill"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "nav-dot"
-  }), "Gemini 2.5 Flash")), authEnabled && authLoading && /*#__PURE__*/React.createElement("div", {
-    className: "loading-wrap"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "loading-card",
-    style: {
-      padding: '48px 40px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "spinner"
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "loading-sub"
-  }, "Checking authentication…"))), authEnabled && !authLoading && !user && /*#__PURE__*/React.createElement(LoginScreen, {
-    onSignIn: signIn
-  }), isLoggedIn && !authLoading && screen === 'upload' && /*#__PURE__*/React.createElement("div", {
-    className: "hero"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "hero-badge"
-  }, "✦ AI-Powered Medical Analysis"), /*#__PURE__*/React.createElement("h1", {
-    className: "hero-h1"
-  }, "Understand Your", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
-    className: "grad"
-  }, "Medical Reports")), /*#__PURE__*/React.createElement("p", {
-    className: "hero-sub"
-  }, "Upload any medical report and receive plain-English insights from MedBot, your AI medical analyst — with automatic privacy protection built in."), /*#__PURE__*/React.createElement("div", {
-    className: "card upload-card"
-  }, !GEMINI_API_KEY && /*#__PURE__*/React.createElement("div", {
-    className: "field"
-  }, /*#__PURE__*/React.createElement("label", {
-    className: `field-label ${key || focused ? 'up' : ''}`
-  }, "Google Gemini API Key"), /*#__PURE__*/React.createElement("input", {
-    className: "field-input",
-    type: "password",
-    value: key,
-    onChange: e => setKey(e.target.value),
-    onFocus: () => setFocused(true),
-    onBlur: () => setFocused(false),
-    placeholder: focused ? 'AIza…' : ''
-  })), /*#__PURE__*/React.createElement("div", {
-    className: `dropzone ${over ? 'over' : ''}`,
-    onDragOver: e => {
-      e.preventDefault();
-      setOver(true);
-    },
-    onDragLeave: () => setOver(false),
-    onDrop: e => {
-      e.preventDefault();
-      setOver(false);
-      pickFile(e.dataTransfer.files[0]);
-    },
-    onClick: () => ref.current?.click()
-  }, /*#__PURE__*/React.createElement("input", {
-    ref: ref,
-    type: "file",
-    accept: ".pdf,.txt",
-    style: {
-      display: 'none'
-    },
-    onChange: e => pickFile(e.target.files[0])
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "dz-icon"
-  }, over ? '📂' : '📄'), /*#__PURE__*/React.createElement("div", {
-    className: "dz-title"
-  }, over ? 'Release to upload' : 'Upload Medical Report'), /*#__PURE__*/React.createElement("div", {
-    className: "dz-sub"
-  }, "Drag & drop or click to browse"), /*#__PURE__*/React.createElement("div", {
-    className: "dz-badges"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dz-badge"
-  }, "PDF"), /*#__PURE__*/React.createElement("span", {
-    className: "dz-badge"
-  }, "TXT"), /*#__PURE__*/React.createElement("span", {
-    className: "dz-badge"
-  }, "Max 20 MB"))), file && /*#__PURE__*/React.createElement("div", {
-    className: "file-chip"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "file-chip-icon"
-  }, file.name.endsWith('.pdf') ? '📕' : '📝'), /*#__PURE__*/React.createElement("div", {
-    className: "file-chip-info"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "file-chip-name"
-  }, file.name), /*#__PURE__*/React.createElement("div", {
-    className: "file-chip-size"
-  }, (file.size / 1024).toFixed(1), " KB")), /*#__PURE__*/React.createElement("button", {
-    className: "file-chip-rm",
-    onClick: e => {
-      e.stopPropagation();
-      setFile(null);
-    }
-  }, "✕")), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: begin,
-    disabled: !canGo
-  }, canGo ? 'Analyze with MedBot →' : !key ? GEMINI_API_KEY ? 'Upload a report to continue' : 'Enter your Gemini API key to continue' : 'Upload a report to continue'), /*#__PURE__*/React.createElement("div", {
-    className: "note"
-  }, "🔒 PII auto-removed before AI · No data stored · Educational use only")), /*#__PURE__*/React.createElement("div", {
-    className: "features"
-  }, ['PII Auto-Redaction', 'Plain-English Results', 'Severity Scoring', 'Actionable Insights', 'Privacy-First'].map(f => /*#__PURE__*/React.createElement("div", {
-    key: f,
-    className: "feat"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "feat-dot"
-  }), f)))), isLoggedIn && screen === 'loading' && /*#__PURE__*/React.createElement(LoadingScreen, {
-    step: step
-  }), isLoggedIn && screen === 'error' && /*#__PURE__*/React.createElement("div", {
-    className: "loading-wrap"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "loading-card err-screen"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "err-icon"
-  }, "⚠️"), /*#__PURE__*/React.createElement("div", {
-    className: "err-h"
-  }, "Gemini is busy right now"), /*#__PURE__*/React.createElement("div", {
-    className: "err-sub"
-  }, "The API is under high demand. Your report is still ready — just try again."), /*#__PURE__*/React.createElement("button", {
-    className: "btn-retry-main",
-    onClick: () => runAnalysis(anonText)
-  }, "🔄 Retry"), /*#__PURE__*/React.createElement("button", {
-    className: "btn-back-link",
-    onClick: () => setScreen('upload')
-  }, "← Go back"))), isLoggedIn && screen === 'results' && result && /*#__PURE__*/React.createElement(Results, {
-    result: result,
-    onReset: reset,
-    apiKey: key,
-    reportText: anonText
-  }), isLoggedIn && consent && /*#__PURE__*/React.createElement(ConsentModal, {
-    preview: anonText,
-    onConfirm: confirmConsent,
-    onCancel: () => {
-      setConsent(false);
-      setScreen('upload');
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "toasts"
-  }, toasts.map(t => /*#__PURE__*/React.createElement("div", {
-    key: t.id,
-    className: `toast ${t.type}`
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "toast-icon"
-  }, t.type === 'success' ? '✓' : t.type === 'error' ? '✕' : 'ℹ'), t.msg))));
+
+  const reset = () => { setScreen('upload'); setFile(null); setResult(null); setAnonText(''); setStep(0); };
+
+  return (
+    <>
+      {/* Navbar */}
+      <nav className="nav">
+        <div className="nav-logo">
+          <div className="nav-logo-mark">⚕</div>
+          MedBot
+        </div>
+        {isLoggedIn && user ? (
+          <div className="nav-user">
+            <span className="nav-email">{user.email}</span>
+            <button className="btn-logout" onClick={signOut}>Sign out</button>
+          </div>
+        ) : (
+          <div className="nav-pill">
+            <div className="nav-dot"/>
+            Gemini 2.5 Flash
+          </div>
+        )}
+      </nav>
+
+      {/* Auth loading */}
+      {authEnabled && authLoading && (
+        <div className="loading-wrap">
+          <div className="loading-card" style={{ padding: '48px 40px' }}>
+            <div className="spinner"/>
+            <div className="loading-sub">Checking authentication…</div>
+          </div>
+        </div>
+      )}
+
+      {/* Login screen — shown when auth is enabled but user is not logged in */}
+      {authEnabled && !authLoading && !user && (
+        <LoginScreen onSignIn={signIn}/>
+      )}
+
+      {/* Upload — shown when logged in (or auth disabled) */}
+      {isLoggedIn && !authLoading && screen === 'upload' && (
+        <div className="hero">
+          <div className="hero-badge">✦ AI-Powered Medical Analysis</div>
+          <h1 className="hero-h1">Understand Your<br/><span className="grad">Medical Reports</span></h1>
+          <p className="hero-sub">
+            Upload any medical report and receive plain-English insights from MedBot,
+            your AI medical analyst — with automatic privacy protection built in.
+          </p>
+
+          <div className="card upload-card">
+            {/* API key — hidden when pre-filled via GEMINI_API_KEY constant */}
+            {!GEMINI_API_KEY && (
+              <div className="field">
+                <label className={`field-label ${key || focused ? 'up' : ''}`}>
+                  Google Gemini API Key
+                </label>
+                <input className="field-input" type="password" value={key}
+                  onChange={e => setKey(e.target.value)}
+                  onFocus={() => setFocused(true)}
+                  onBlur={() => setFocused(false)}
+                  placeholder={focused ? 'AIza…' : ''}
+                />
+              </div>
+            )}
+
+            {/* Dropzone */}
+            <div className={`dropzone ${over ? 'over' : ''}`}
+              onDragOver={e => { e.preventDefault(); setOver(true); }}
+              onDragLeave={() => setOver(false)}
+              onDrop={e => { e.preventDefault(); setOver(false); pickFile(e.dataTransfer.files[0]); }}
+              onClick={() => ref.current?.click()}
+            >
+              <input ref={ref} type="file" accept=".pdf,.txt" style={{ display: 'none' }}
+                onChange={e => pickFile(e.target.files[0])}/>
+              <div className="dz-icon">{over ? '📂' : '📄'}</div>
+              <div className="dz-title">{over ? 'Release to upload' : 'Upload Medical Report'}</div>
+              <div className="dz-sub">Drag & drop or click to browse</div>
+              <div className="dz-badges">
+                <span className="dz-badge">PDF</span>
+                <span className="dz-badge">TXT</span>
+                <span className="dz-badge">Max 20 MB</span>
+              </div>
+            </div>
+
+            {/* File chip */}
+            {file && (
+              <div className="file-chip">
+                <div className="file-chip-icon">{file.name.endsWith('.pdf') ? '📕' : '📝'}</div>
+                <div className="file-chip-info">
+                  <div className="file-chip-name">{file.name}</div>
+                  <div className="file-chip-size">{(file.size / 1024).toFixed(1)} KB</div>
+                </div>
+                <button className="file-chip-rm"
+                  onClick={e => { e.stopPropagation(); setFile(null); }}>✕</button>
+              </div>
+            )}
+
+            <button className="btn" onClick={begin} disabled={!canGo}>
+              {canGo ? 'Analyze with MedBot →'
+                : !key ? (GEMINI_API_KEY ? 'Upload a report to continue' : 'Enter your Gemini API key to continue')
+                : 'Upload a report to continue'}
+            </button>
+            <div className="note">🔒 PII auto-removed before AI · No data stored · Educational use only</div>
+          </div>
+
+          <div className="features">
+            {['PII Auto-Redaction', 'Plain-English Results', 'Severity Scoring', 'Actionable Insights', 'Privacy-First'].map(f => (
+              <div key={f} className="feat"><div className="feat-dot"/>{f}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Loading */}
+      {isLoggedIn && screen === 'loading' && <LoadingScreen step={step}/>}
+
+      {/* Analysis error */}
+      {isLoggedIn && screen === 'error' && (
+        <div className="loading-wrap">
+          <div className="loading-card err-screen">
+            <div className="err-icon">⚠️</div>
+            <div className="err-h">Gemini is busy right now</div>
+            <div className="err-sub">The API is under high demand. Your report is still ready — just try again.</div>
+            <button className="btn-retry-main" onClick={() => runAnalysis(anonText)}>
+              🔄 Retry
+            </button>
+            <button className="btn-back-link" onClick={() => setScreen('upload')}>
+              ← Go back
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Results */}
+      {isLoggedIn && screen === 'results' && result && (
+        <Results result={result} onReset={reset} apiKey={key} reportText={anonText}/>
+      )}
+
+      {/* Consent modal */}
+      {isLoggedIn && consent && (
+        <ConsentModal
+          preview={anonText}
+          onConfirm={confirmConsent}
+          onCancel={() => { setConsent(false); setScreen('upload'); }}
+        />
+      )}
+
+      {/* Toasts */}
+      <div className="toasts">
+        {toasts.map(t => (
+          <div key={t.id} className={`toast ${t.type}`}>
+            <span className="toast-icon">{t.type === 'success' ? '✓' : t.type === 'error' ? '✕' : 'ℹ'}</span>
+            {t.msg}
+          </div>
+        ))}
+      </div>
+    </>
+  );
 }
-ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App, null));</script>
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
 </body>
 </html>
