@@ -13,7 +13,6 @@ from typing import List
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from jose import JWTError, jwt
 from pydantic import BaseModel
 from supabase import Client, create_client
 import google.generativeai as genai
@@ -60,18 +59,17 @@ def _get_user(request: Request) -> dict:
             status_code=401,
             detail=f"Not authenticated (cookies: {list(request.cookies.keys())}, has_auth_header: {'authorization' in request.headers})"
         )
-    if not SUPABASE_JWT_SECRET:
-        raise HTTPException(status_code=500, detail="SUPABASE_JWT_SECRET not configured")
+    # Delegate verification to Supabase — avoids JWT algorithm/secret issues
+    # (newer Supabase projects sign with ES256, not the HS256 legacy secret).
+    db = get_db()
     try:
-        payload = jwt.decode(
-            token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated"
-        )
-    except JWTError as e:
+        result = db.auth.get_user(token)
+    except Exception as e:
         raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)}")
-    uid = payload.get("sub")
-    if not uid:
-        raise HTTPException(status_code=401, detail="Token missing user ID")
-    return {"id": uid, "email": payload.get("email", "")}
+    user = getattr(result, "user", None)
+    if not user or not getattr(user, "id", None):
+        raise HTTPException(status_code=401, detail="Token did not resolve to a user")
+    return {"id": user.id, "email": getattr(user, "email", "") or ""}
 
 
 # ── PII Redaction ───────────────────────────────────────────────────────
