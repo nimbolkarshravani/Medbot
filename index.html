@@ -687,31 +687,12 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-/* ── Auth hook (magic link flow — zero Supabase SDK) ── */
+/* ── Auth hook (email + password via backend) ── */
 function useAuth() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash && hash.includes('access_token=')) {
-      const params = new URLSearchParams(hash.substring(1));
-      const accessToken = params.get('access_token');
-      if (accessToken) {
-        window.history.replaceState(null, '', window.location.pathname);
-        fetch('/api/auth/session', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            access_token: accessToken
-          }),
-          credentials: 'include'
-        }).then(r => r.ok ? r.json() : Promise.reject()).then(data => setUser(data.user)).catch(() => {}).finally(() => setLoading(false));
-        return;
-      }
-    }
     fetch('/api/me', {
       credentials: 'include'
     }).then(r => {
@@ -722,14 +703,15 @@ function useAuth() {
       if (data) setUser(data);
     }).catch(() => setAuthEnabled(false)).finally(() => setLoading(false));
   }, []);
-  const signIn = async email => {
-    const res = await fetch('/api/auth/login', {
+  const signUp = async (email, password) => {
+    const res = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        email
+        email,
+        password
       }),
       credentials: 'include'
     });
@@ -737,10 +719,38 @@ function useAuth() {
       const data = await res.json().catch(() => ({}));
       return {
         error: {
-          message: data.detail || 'Failed to send magic link'
+          message: data.detail || 'Signup failed'
         }
       };
     }
+    const data = await res.json();
+    setUser(data.user);
+    return {
+      error: null
+    };
+  };
+  const signIn = async (email, password) => {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        email,
+        password
+      }),
+      credentials: 'include'
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return {
+        error: {
+          message: data.detail || 'Login failed'
+        }
+      };
+    }
+    const data = await res.json();
+    setUser(data.user);
     return {
       error: null
     };
@@ -756,6 +766,7 @@ function useAuth() {
     user,
     loading,
     authEnabled,
+    signUp,
     signIn,
     signOut
   };
@@ -1391,27 +1402,38 @@ function Results({
   }));
 }
 
-/* ── Login screen (magic link — works on Supabase free tier) ──────────── */
-function LoginScreen({
+/* ── Auth screens (email + password signup/login) ──────────────────────── */
+function AuthScreens({
+  onSignUp,
   onSignIn
 }) {
+  const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [emailFocus, setEmailFocus] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [passwordFocus, setPasswordFocus] = useState(false);
+  const [confirm, setConfirm] = useState('');
+  const [confirmFocus, setConfirmFocus] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const handleSubmit = async e => {
     e.preventDefault();
-    if (!email.trim() || busy) return;
+    if (!email.trim() || !password.trim() || busy) return;
+    if (isSignUp && password !== confirm) {
+      setErr('Passwords do not match');
+      return;
+    }
+    if (password.length < 8) {
+      setErr('Password must be at least 8 characters');
+      return;
+    }
     setBusy(true);
     setErr('');
     const {
       error
-    } = await onSignIn(email.trim());
+    } = isSignUp ? await onSignUp(email.trim(), password) : await onSignIn(email.trim(), password);
     if (error) {
       setErr(error.message);
-    } else {
-      setSent(true);
     }
     setBusy(false);
   };
@@ -1434,17 +1456,17 @@ function LoginScreen({
     style: {
       marginBottom: 40
     }
-  }, "Sign in with your email to get started. No password needed — we'll send you a magic link."), /*#__PURE__*/React.createElement("div", {
+  }, "Understand your medical reports with AI analysis and insights."), /*#__PURE__*/React.createElement("div", {
     className: "login-card"
   }, /*#__PURE__*/React.createElement("div", {
     className: "login-icon"
-  }, "⚕"), !sent ? /*#__PURE__*/React.createElement("form", {
+  }, "⚕"), /*#__PURE__*/React.createElement("form", {
     onSubmit: handleSubmit
   }, /*#__PURE__*/React.createElement("div", {
     className: "login-h"
-  }, "Sign In"), /*#__PURE__*/React.createElement("div", {
+  }, isSignUp ? 'Create Account' : 'Sign In'), /*#__PURE__*/React.createElement("div", {
     className: "login-sub"
-  }, "Enter your email and we'll send a magic link"), /*#__PURE__*/React.createElement("div", {
+  }, isSignUp ? 'Sign up to get started' : 'Sign in to your account'), /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", {
     className: `field-label ${email || emailFocus ? 'up' : ''}`
@@ -1457,6 +1479,37 @@ function LoginScreen({
     onBlur: () => setEmailFocus(false),
     placeholder: emailFocus ? 'you@example.com' : '',
     required: true
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: `field-label ${password || passwordFocus ? 'up' : ''}`
+  }, "Password ", isSignUp && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: '#64748b'
+    }
+  }, "(min 8 chars)")), /*#__PURE__*/React.createElement("input", {
+    className: "field-input",
+    type: "password",
+    value: password,
+    onChange: e => setPassword(e.target.value),
+    onFocus: () => setPasswordFocus(true),
+    onBlur: () => setPasswordFocus(false),
+    placeholder: passwordFocus ? '••••••••' : '',
+    required: true
+  })), isSignUp && /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: `field-label ${confirm || confirmFocus ? 'up' : ''}`
+  }, "Confirm password"), /*#__PURE__*/React.createElement("input", {
+    className: "field-input",
+    type: "password",
+    value: confirm,
+    onChange: e => setConfirm(e.target.value),
+    onFocus: () => setConfirmFocus(true),
+    onBlur: () => setConfirmFocus(false),
+    placeholder: confirmFocus ? '••••••••' : '',
+    required: isSignUp
   })), err && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '10px 14px',
@@ -1470,31 +1523,29 @@ function LoginScreen({
   }, err), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     type: "submit",
-    disabled: busy || !email.trim(),
+    disabled: busy || !email.trim() || !password.trim(),
     style: {
       marginTop: 8
     }
-  }, busy ? 'Sending…' : 'Send Magic Link →')) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "login-h"
-  }, "Check your email"), /*#__PURE__*/React.createElement("div", {
-    className: "login-sub",
+  }, busy ? isSignUp ? 'Creating…' : 'Signing in…' : isSignUp ? 'Create Account →' : 'Sign In →')), /*#__PURE__*/React.createElement("div", {
     style: {
-      marginBottom: 20
+      textAlign: 'center',
+      marginTop: 16,
+      fontSize: 14,
+      color: '#64748b'
     }
-  }, "We sent a magic link to ", /*#__PURE__*/React.createElement("strong", null, email)), /*#__PURE__*/React.createElement("div", {
-    className: "login-sent"
-  }, "📬 Click the link in your email to sign in", /*#__PURE__*/React.createElement("div", {
-    className: "login-sent-sub"
-  }, "Didn't get it? Check your spam folder.")), /*#__PURE__*/React.createElement("button", {
+  }, isSignUp ? 'Already have an account? ' : "Don't have an account? ", /*#__PURE__*/React.createElement("button", {
     className: "btn-back-link",
     style: {
-      marginTop: 16
+      marginTop: 0
     },
     onClick: () => {
-      setSent(false);
-      setEmail('');
+      setIsSignUp(!isSignUp);
+      setErr('');
+      setPassword('');
+      setConfirm('');
     }
-  }, "← Use a different email"))));
+  }, isSignUp ? 'Sign In' : 'Sign Up'))));
 }
 
 /* ── App ────────────────────────────────────────────────────────────────── */
@@ -1503,6 +1554,7 @@ function App() {
     user,
     loading: authLoading,
     authEnabled,
+    signUp,
     signIn,
     signOut
   } = useAuth();
@@ -1618,7 +1670,8 @@ function App() {
     className: "spinner"
   }), /*#__PURE__*/React.createElement("div", {
     className: "loading-sub"
-  }, "Checking authentication…"))), authEnabled && !authLoading && !user && /*#__PURE__*/React.createElement(LoginScreen, {
+  }, "Checking authentication…"))), authEnabled && !authLoading && !user && /*#__PURE__*/React.createElement(AuthScreens, {
+    onSignUp: signUp,
     onSignIn: signIn
   }), isLoggedIn && !authLoading && screen === 'upload' && /*#__PURE__*/React.createElement("div", {
     className: "hero"

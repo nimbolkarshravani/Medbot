@@ -1,12 +1,11 @@
 """
 MedBot API — Vercel Python serverless function.
-Handles auth (email OTP via Supabase REST API) and protected endpoints.
-All Supabase communication happens server-side — frontend has zero SDK code.
+Email + password authentication via Supabase Auth.
 """
 import os
+import time
 from datetime import datetime, timezone
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
@@ -50,63 +49,62 @@ def _get_user(request: Request) -> dict:
     return {"id": uid, "email": payload.get("email", "")}
 
 
-# ── Auth ─────────────────────────────────────────────────────────────────
+# ── Auth Models ──────────────────────────────────────────────────────────
 
-class LoginRequest(BaseModel):
+class SignUpRequest(BaseModel):
     email: str
-    redirect_to: str = ""
+    password: str
 
 
-class SessionRequest(BaseModel):
-    access_token: str
+class SignInRequest(BaseModel):
+    email: str
+    password: str
+
+
+# ── Auth Endpoints ───────────────────────────────────────────────────────
+
+@app.post("/api/auth/signup")
+async def auth_signup(body: SignUpRequest):
+    """Create new user account with email + password."""
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    db = get_db()
+    try:
+        result = db.auth.sign_up(email=body.email, password=body.password)
+        return {"user": {"id": result.user.id, "email": result.user.email}}
+    except Exception as e:
+        detail = str(e)
+        if "already registered" in detail.lower():
+            detail = "Email already registered"
+        elif "invalid" in detail.lower():
+            detail = "Invalid email format"
+        raise HTTPException(status_code=400, detail=detail)
 
 
 @app.post("/api/auth/login")
-async def auth_login(body: LoginRequest):
-    """Send magic link email via Supabase (works on free tier, no template changes)."""
-    payload = {"email": body.email, "create_user": True}
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{SUPABASE_URL}/auth/v1/magiclink",
-            json=payload,
-            headers={
-                "apikey": SUPABASE_ANON_KEY,
-                "Content-Type": "application/json",
-            },
-        )
-    if resp.status_code >= 400:
-        detail = "Failed to send magic link"
-        try:
-            detail = resp.json().get("msg", detail)
-        except Exception:
-            pass
-        raise HTTPException(status_code=400, detail=detail)
-    return {"message": "Check your email for a magic link"}
-
-
-@app.post("/api/auth/session")
-async def auth_session(body: SessionRequest):
-    """Receive access_token from frontend (after magic link redirect), verify it, set httpOnly cookie."""
+async def auth_login(body: SignInRequest):
+    """Sign in with email + password, set httpOnly cookie."""
+    db = get_db()
     try:
-        payload = jwt.decode(
-            body.access_token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated",
-        )
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    uid = payload.get("sub")
-    email = payload.get("email", "")
-    if not uid:
-        raise HTTPException(status_code=401, detail="Token missing user ID")
-    exp = payload.get("exp", 0)
-    import time
-    max_age = max(int(exp - time.time()), 60)
-    response = JSONResponse({"user": {"id": uid, "email": email}})
+        result = db.auth.sign_in_with_password(email=body.email, password=body.password)
+    except Exception as e:
+        detail = str(e)
+        if "invalid" in detail.lower() or "credentials" in detail.lower():
+            detail = "Invalid email or password"
+        raise HTTPException(status_code=401, detail=detail)
+
+    access_token = result.session.access_token if result.session else None
+    if not access_token:
+        raise HTTPException(status_code=500, detail="Failed to get access token")
+
+    user = result.user
+    exp = result.session.expires_in if result.session else 3600
+    max_age = max(int(exp), 60)
+
+    response = JSONResponse({"user": {"id": user.id, "email": user.email}})
     response.set_cookie(
         "medbot_token",
-        body.access_token,
+        access_token,
         httponly=True,
         secure=True,
         samesite="lax",
@@ -118,6 +116,7 @@ async def auth_session(body: SessionRequest):
 
 @app.post("/api/auth/logout")
 async def auth_logout():
+    """Clear session cookie."""
     response = JSONResponse({"message": "Logged out"})
     response.delete_cookie("medbot_token", path="/")
     return response

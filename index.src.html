@@ -677,33 +677,13 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-/* ── Auth hook (magic link flow — zero Supabase SDK) ── */
+/* ── Auth hook (email + password via backend) ── */
 function useAuth() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
 
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash && hash.includes('access_token=')) {
-      const params = new URLSearchParams(hash.substring(1));
-      const accessToken = params.get('access_token');
-      if (accessToken) {
-        window.history.replaceState(null, '', window.location.pathname);
-        fetch('/api/auth/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ access_token: accessToken }),
-          credentials: 'include',
-        })
-          .then(r => r.ok ? r.json() : Promise.reject())
-          .then(data => setUser(data.user))
-          .catch(() => {})
-          .finally(() => setLoading(false));
-        return;
-      }
-    }
-
     fetch('/api/me', { credentials: 'include' })
       .then(r => {
         if (r.status === 401) return null;
@@ -715,17 +695,35 @@ function useAuth() {
       .finally(() => setLoading(false));
   }, []);
 
-  const signIn = async (email) => {
-    const res = await fetch('/api/auth/login', {
+  const signUp = async (email, password) => {
+    const res = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, password }),
       credentials: 'include',
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      return { error: { message: data.detail || 'Failed to send magic link' } };
+      return { error: { message: data.detail || 'Signup failed' } };
     }
+    const data = await res.json();
+    setUser(data.user);
+    return { error: null };
+  };
+
+  const signIn = async (email, password) => {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { error: { message: data.detail || 'Login failed' } };
+    }
+    const data = await res.json();
+    setUser(data.user);
     return { error: null };
   };
 
@@ -734,7 +732,7 @@ function useAuth() {
     setUser(null);
   };
 
-  return { user, loading, authEnabled, signIn, signOut };
+  return { user, loading, authEnabled, signUp, signIn, signOut };
 }
 
 /* ── PII patterns ─────────────────────────────────────────────────────── */
@@ -1250,21 +1248,34 @@ function Results({ result, onReset, apiKey, reportText }) {
   );
 }
 
-/* ── Login screen (magic link — works on Supabase free tier) ──────────── */
-function LoginScreen({ onSignIn }) {
+/* ── Auth screens (email + password signup/login) ──────────────────────── */
+function AuthScreens({ onSignUp, onSignIn }) {
+  const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [emailFocus, setEmailFocus] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [passwordFocus, setPasswordFocus] = useState(false);
+  const [confirm, setConfirm] = useState('');
+  const [confirmFocus, setConfirmFocus] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email.trim() || busy) return;
+    if (!email.trim() || !password.trim() || busy) return;
+    if (isSignUp && password !== confirm) {
+      setErr('Passwords do not match');
+      return;
+    }
+    if (password.length < 8) {
+      setErr('Password must be at least 8 characters');
+      return;
+    }
     setBusy(true); setErr('');
-    const { error } = await onSignIn(email.trim());
+    const { error } = isSignUp
+      ? await onSignUp(email.trim(), password)
+      : await onSignIn(email.trim(), password);
     if (error) { setErr(error.message); }
-    else { setSent(true); }
     setBusy(false);
   };
 
@@ -1275,59 +1286,78 @@ function LoginScreen({ onSignIn }) {
         Welcome to<br/><span className="grad">MedBot</span>
       </h1>
       <p className="hero-sub" style={{ marginBottom: 40 }}>
-        Sign in with your email to get started. No password needed — we'll send you a magic link.
+        Understand your medical reports with AI analysis and insights.
       </p>
 
       <div className="login-card">
         <div className="login-icon">⚕</div>
 
-        {!sent ? (
-          <form onSubmit={handleSubmit}>
-            <div className="login-h">Sign In</div>
-            <div className="login-sub">Enter your email and we'll send a magic link</div>
+        <form onSubmit={handleSubmit}>
+          <div className="login-h">{isSignUp ? 'Create Account' : 'Sign In'}</div>
+          <div className="login-sub">{isSignUp ? 'Sign up to get started' : 'Sign in to your account'}</div>
 
+          <div className="field">
+            <label className={`field-label ${email || emailFocus ? 'up' : ''}`}>
+              Email address
+            </label>
+            <input className="field-input" type="email" value={email}
+              onChange={e => setEmail(e.target.value)}
+              onFocus={() => setEmailFocus(true)}
+              onBlur={() => setEmailFocus(false)}
+              placeholder={emailFocus ? 'you@example.com' : ''}
+              required
+            />
+          </div>
+
+          <div className="field">
+            <label className={`field-label ${password || passwordFocus ? 'up' : ''}`}>
+              Password {isSignUp && <span style={{ fontSize: 12, color: '#64748b' }}>(min 8 chars)</span>}
+            </label>
+            <input className="field-input" type="password" value={password}
+              onChange={e => setPassword(e.target.value)}
+              onFocus={() => setPasswordFocus(true)}
+              onBlur={() => setPasswordFocus(false)}
+              placeholder={passwordFocus ? '••••••••' : ''}
+              required
+            />
+          </div>
+
+          {isSignUp && (
             <div className="field">
-              <label className={`field-label ${email || emailFocus ? 'up' : ''}`}>
-                Email address
+              <label className={`field-label ${confirm || confirmFocus ? 'up' : ''}`}>
+                Confirm password
               </label>
-              <input className="field-input" type="email" value={email}
-                onChange={e => setEmail(e.target.value)}
-                onFocus={() => setEmailFocus(true)}
-                onBlur={() => setEmailFocus(false)}
-                placeholder={emailFocus ? 'you@example.com' : ''}
-                required
+              <input className="field-input" type="password" value={confirm}
+                onChange={e => setConfirm(e.target.value)}
+                onFocus={() => setConfirmFocus(true)}
+                onBlur={() => setConfirmFocus(false)}
+                placeholder={confirmFocus ? '••••••••' : ''}
+                required={isSignUp}
               />
             </div>
+          )}
 
-            {err && (
-              <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,.08)',
-                border: '1px solid rgba(239,68,68,.2)', borderRadius: 10,
-                fontSize: 13, color: '#dc2626', marginBottom: 16 }}>
-                {err}
-              </div>
-            )}
+          {err && (
+            <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,.08)',
+              border: '1px solid rgba(239,68,68,.2)', borderRadius: 10,
+              fontSize: 13, color: '#dc2626', marginBottom: 16 }}>
+              {err}
+            </div>
+          )}
 
-            <button className="btn" type="submit" disabled={busy || !email.trim()}
-              style={{ marginTop: 8 }}>
-              {busy ? 'Sending…' : 'Send Magic Link →'}
-            </button>
-          </form>
-        ) : (
-          <div>
-            <div className="login-h">Check your email</div>
-            <div className="login-sub" style={{ marginBottom: 20 }}>
-              We sent a magic link to <strong>{email}</strong>
-            </div>
-            <div className="login-sent">
-              📬 Click the link in your email to sign in
-              <div className="login-sent-sub">Didn't get it? Check your spam folder.</div>
-            </div>
-            <button className="btn-back-link" style={{ marginTop: 16 }}
-              onClick={() => { setSent(false); setEmail(''); }}>
-              ← Use a different email
-            </button>
-          </div>
-        )}
+          <button className="btn" type="submit" disabled={busy || !email.trim() || !password.trim()}
+            style={{ marginTop: 8 }}>
+            {busy ? (isSignUp ? 'Creating…' : 'Signing in…') : (isSignUp ? 'Create Account →' : 'Sign In →')}
+          </button>
+        </form>
+
+        <div style={{ textAlign: 'center', marginTop: 16, fontSize: 14, color: '#64748b' }}>
+          {isSignUp ? 'Already have an account? ' : "Don't have an account? "}
+          <button className="btn-back-link" style={{ marginTop: 0 }}
+            onClick={() => { setIsSignUp(!isSignUp); setErr(''); setPassword(''); setConfirm(''); }}>
+            {isSignUp ? 'Sign In' : 'Sign Up'}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1335,7 +1365,7 @@ function LoginScreen({ onSignIn }) {
 
 /* ── App ────────────────────────────────────────────────────────────────── */
 function App() {
-  const { user, loading: authLoading, authEnabled, signIn, signOut } = useAuth();
+  const { user, loading: authLoading, authEnabled, signUp, signIn, signOut } = useAuth();
   const [key, setKey] = useState(GEMINI_API_KEY);
   const [focused, setFocused] = useState(false);
   const [file, setFile] = useState(null);
@@ -1445,7 +1475,7 @@ function App() {
 
       {/* Login screen — shown when auth is enabled but user is not logged in */}
       {authEnabled && !authLoading && !user && (
-        <LoginScreen onSignIn={signIn}/>
+        <AuthScreens onSignUp={signUp} onSignIn={signIn}/>
       )}
 
       {/* Upload — shown when logged in (or auth disabled) */}
