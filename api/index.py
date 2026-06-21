@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import List
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -26,6 +27,17 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 genai.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI(title="MedBot API", version="2.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://medbot-hazel.vercel.app",
+        "http://localhost:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _client: Client | None = None
 
@@ -44,13 +56,18 @@ def _get_user(request: Request) -> dict:
         if auth.startswith("Bearer "):
             token = auth[7:]
     if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(
+            status_code=401,
+            detail=f"Not authenticated (cookies: {list(request.cookies.keys())}, has_auth_header: {'authorization' in request.headers})"
+        )
+    if not SUPABASE_JWT_SECRET:
+        raise HTTPException(status_code=500, detail="SUPABASE_JWT_SECRET not configured")
     try:
         payload = jwt.decode(
             token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated"
         )
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)}")
     uid = payload.get("sub")
     if not uid:
         raise HTTPException(status_code=401, detail="Token missing user ID")
@@ -179,7 +196,10 @@ async def auth_login(body: SignInRequest):
     user = result.user
     max_age = max(int(session.expires_in or 3600), 60)
 
-    response = JSONResponse({"user": {"id": user.id, "email": user.email}})
+    response = JSONResponse({
+        "user": {"id": user.id, "email": user.email},
+        "access_token": session.access_token,
+    })
     response.set_cookie(
         "medbot_token",
         session.access_token,

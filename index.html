@@ -672,12 +672,16 @@ setTimeout(function() {
 const GEMINI_API_KEY = '';
 /* ──────────────────────────────────────────────────────────────────────── */
 
-/* ── Backend API (same origin, cookies sent automatically) ── */
+/* ── Backend API (cookies + Authorization header fallback) ── */
+let _authToken = sessionStorage.getItem('medbot_token') || '';
 async function apiFetch(path, options = {}) {
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {})
   };
+  if (_authToken) {
+    headers['Authorization'] = 'Bearer ' + _authToken;
+  }
   const res = await fetch('/api' + path, {
     ...options,
     headers,
@@ -693,10 +697,17 @@ function useAuth() {
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
   useEffect(() => {
+    const headers = {};
+    if (_authToken) headers['Authorization'] = 'Bearer ' + _authToken;
     fetch('/api/me', {
-      credentials: 'include'
+      credentials: 'include',
+      headers
     }).then(r => {
-      if (r.status === 401) return null;
+      if (r.status === 401) {
+        _authToken = '';
+        sessionStorage.removeItem('medbot_token');
+        return null;
+      }
       if (!r.ok) throw new Error('Backend unavailable');
       return r.json();
     }).then(data => {
@@ -750,6 +761,10 @@ function useAuth() {
       };
     }
     const data = await res.json();
+    if (data.access_token) {
+      _authToken = data.access_token;
+      sessionStorage.setItem('medbot_token', data.access_token);
+    }
     setUser(data.user);
     return {
       error: null
@@ -760,6 +775,8 @@ function useAuth() {
       method: 'POST',
       credentials: 'include'
     });
+    _authToken = '';
+    sessionStorage.removeItem('medbot_token');
     setUser(null);
   };
   return {
