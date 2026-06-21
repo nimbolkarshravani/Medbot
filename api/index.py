@@ -65,46 +65,40 @@ class SignInRequest(BaseModel):
 
 @app.post("/api/auth/signup")
 async def auth_signup(body: SignUpRequest):
-    """Create new user account with email + password."""
     if len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     db = get_db()
     try:
-        result = db.auth.sign_up(email=body.email, password=body.password)
-        return {"user": {"id": result.user.id, "email": result.user.email}}
+        result = db.auth.sign_up({"email": body.email, "password": body.password})
+        user = result.user
+        if not user:
+            raise HTTPException(status_code=400, detail="Signup failed — no user returned")
+        return {"user": {"id": user.id, "email": user.email}}
+    except HTTPException:
+        raise
     except Exception as e:
-        detail = str(e)
-        if "already registered" in detail.lower():
-            detail = "Email already registered"
-        elif "invalid" in detail.lower():
-            detail = "Invalid email format"
-        raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/auth/login")
 async def auth_login(body: SignInRequest):
-    """Sign in with email + password, set httpOnly cookie."""
     db = get_db()
     try:
-        result = db.auth.sign_in_with_password(email=body.email, password=body.password)
+        result = db.auth.sign_in_with_password({"email": body.email, "password": body.password})
     except Exception as e:
-        detail = str(e)
-        if "invalid" in detail.lower() or "credentials" in detail.lower():
-            detail = "Invalid email or password"
-        raise HTTPException(status_code=401, detail=detail)
+        raise HTTPException(status_code=401, detail=str(e))
 
-    access_token = result.session.access_token if result.session else None
-    if not access_token:
+    session = result.session
+    if not session or not session.access_token:
         raise HTTPException(status_code=500, detail="Failed to get access token")
 
     user = result.user
-    exp = result.session.expires_in if result.session else 3600
-    max_age = max(int(exp), 60)
+    max_age = max(int(session.expires_in or 3600), 60)
 
     response = JSONResponse({"user": {"id": user.id, "email": user.email}})
     response.set_cookie(
         "medbot_token",
-        access_token,
+        session.access_token,
         httponly=True,
         secure=True,
         samesite="lax",
