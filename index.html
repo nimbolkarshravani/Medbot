@@ -687,12 +687,31 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-/* ── Auth hook (all auth via backend — zero Supabase SDK) ── */
+/* ── Auth hook (magic link flow — zero Supabase SDK) ── */
 function useAuth() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
   useEffect(() => {
+    const hash = window.location.hash;
+    if (hash && hash.includes('access_token=')) {
+      const params = new URLSearchParams(hash.substring(1));
+      const accessToken = params.get('access_token');
+      if (accessToken) {
+        window.history.replaceState(null, '', window.location.pathname);
+        fetch('/api/auth/session', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            access_token: accessToken
+          }),
+          credentials: 'include'
+        }).then(r => r.ok ? r.json() : Promise.reject()).then(data => setUser(data.user)).catch(() => {}).finally(() => setLoading(false));
+        return;
+      }
+    }
     fetch('/api/me', {
       credentials: 'include'
     }).then(r => {
@@ -718,36 +737,10 @@ function useAuth() {
       const data = await res.json().catch(() => ({}));
       return {
         error: {
-          message: data.detail || 'Failed to send code'
+          message: data.detail || 'Failed to send magic link'
         }
       };
     }
-    return {
-      error: null
-    };
-  };
-  const verify = async (email, token) => {
-    const res = await fetch('/api/auth/verify', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        email,
-        token
-      }),
-      credentials: 'include'
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      return {
-        error: {
-          message: data.detail || 'Invalid code'
-        }
-      };
-    }
-    const data = await res.json();
-    setUser(data.user);
     return {
       error: null
     };
@@ -764,7 +757,6 @@ function useAuth() {
     loading,
     authEnabled,
     signIn,
-    verify,
     signOut
   };
 }
@@ -1399,19 +1391,16 @@ function Results({
   }));
 }
 
-/* ── Login screen (two-step: email → 6-digit OTP code) ────────────────── */
+/* ── Login screen (magic link — works on Supabase free tier) ──────────── */
 function LoginScreen({
-  onSignIn,
-  onVerify
+  onSignIn
 }) {
   const [email, setEmail] = useState('');
   const [emailFocus, setEmailFocus] = useState(false);
-  const [code, setCode] = useState('');
-  const [codeFocus, setCodeFocus] = useState(false);
-  const [step, setStep] = useState('email');
+  const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const handleSendCode = async e => {
+  const handleSubmit = async e => {
     e.preventDefault();
     if (!email.trim() || busy) return;
     setBusy(true);
@@ -1422,20 +1411,7 @@ function LoginScreen({
     if (error) {
       setErr(error.message);
     } else {
-      setStep('code');
-    }
-    setBusy(false);
-  };
-  const handleVerify = async e => {
-    e.preventDefault();
-    if (!code.trim() || busy) return;
-    setBusy(true);
-    setErr('');
-    const {
-      error
-    } = await onVerify(email.trim(), code.trim());
-    if (error) {
-      setErr(error.message);
+      setSent(true);
     }
     setBusy(false);
   };
@@ -1458,17 +1434,17 @@ function LoginScreen({
     style: {
       marginBottom: 40
     }
-  }, "Sign in with your email to get started. We'll send you a verification code."), /*#__PURE__*/React.createElement("div", {
+  }, "Sign in with your email to get started. No password needed — we'll send you a magic link."), /*#__PURE__*/React.createElement("div", {
     className: "login-card"
   }, /*#__PURE__*/React.createElement("div", {
     className: "login-icon"
-  }, "⚕"), step === 'email' && /*#__PURE__*/React.createElement("form", {
-    onSubmit: handleSendCode
+  }, "⚕"), !sent ? /*#__PURE__*/React.createElement("form", {
+    onSubmit: handleSubmit
   }, /*#__PURE__*/React.createElement("div", {
     className: "login-h"
   }, "Sign In"), /*#__PURE__*/React.createElement("div", {
     className: "login-sub"
-  }, "Enter your email and we'll send a verification code"), /*#__PURE__*/React.createElement("div", {
+  }, "Enter your email and we'll send a magic link"), /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", {
     className: `field-label ${email || emailFocus ? 'up' : ''}`
@@ -1498,59 +1474,25 @@ function LoginScreen({
     style: {
       marginTop: 8
     }
-  }, busy ? 'Sending…' : 'Send Verification Code →')), step === 'code' && /*#__PURE__*/React.createElement("form", {
-    onSubmit: handleVerify
-  }, /*#__PURE__*/React.createElement("div", {
+  }, busy ? 'Sending…' : 'Send Magic Link →')) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "login-h"
-  }, "Enter Code"), /*#__PURE__*/React.createElement("div", {
-    className: "login-sub"
-  }, "We sent a 6-digit code to ", /*#__PURE__*/React.createElement("strong", null, email)), /*#__PURE__*/React.createElement("div", {
-    className: "field"
-  }, /*#__PURE__*/React.createElement("label", {
-    className: `field-label ${code || codeFocus ? 'up' : ''}`
-  }, "Verification code"), /*#__PURE__*/React.createElement("input", {
-    className: "field-input",
-    type: "text",
-    value: code,
-    onChange: e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6)),
-    onFocus: () => setCodeFocus(true),
-    onBlur: () => setCodeFocus(false),
-    placeholder: codeFocus ? '123456' : '',
-    maxLength: 6,
-    autoFocus: true,
-    required: true,
+  }, "Check your email"), /*#__PURE__*/React.createElement("div", {
+    className: "login-sub",
     style: {
-      letterSpacing: '0.3em',
-      fontSize: 20,
-      textAlign: 'center'
+      marginBottom: 20
     }
-  })), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '10px 14px',
-      background: 'rgba(239,68,68,.08)',
-      border: '1px solid rgba(239,68,68,.2)',
-      borderRadius: 10,
-      fontSize: 13,
-      color: '#dc2626',
-      marginBottom: 16
-    }
-  }, err), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    type: "submit",
-    disabled: busy || code.length < 6,
-    style: {
-      marginTop: 8
-    }
-  }, busy ? 'Verifying…' : 'Verify & Sign In →'), /*#__PURE__*/React.createElement("button", {
+  }, "We sent a magic link to ", /*#__PURE__*/React.createElement("strong", null, email)), /*#__PURE__*/React.createElement("div", {
+    className: "login-sent"
+  }, "📬 Click the link in your email to sign in", /*#__PURE__*/React.createElement("div", {
+    className: "login-sent-sub"
+  }, "Didn't get it? Check your spam folder.")), /*#__PURE__*/React.createElement("button", {
     className: "btn-back-link",
-    type: "button",
     style: {
       marginTop: 16
     },
     onClick: () => {
-      setStep('email');
-      setCode('');
-      setErr('');
+      setSent(false);
+      setEmail('');
     }
   }, "← Use a different email"))));
 }
@@ -1562,7 +1504,6 @@ function App() {
     loading: authLoading,
     authEnabled,
     signIn,
-    verify,
     signOut
   } = useAuth();
   const [key, setKey] = useState(GEMINI_API_KEY);
@@ -1678,8 +1619,7 @@ function App() {
   }), /*#__PURE__*/React.createElement("div", {
     className: "loading-sub"
   }, "Checking authentication…"))), authEnabled && !authLoading && !user && /*#__PURE__*/React.createElement(LoginScreen, {
-    onSignIn: signIn,
-    onVerify: verify
+    onSignIn: signIn
   }), isLoggedIn && !authLoading && screen === 'upload' && /*#__PURE__*/React.createElement("div", {
     className: "hero"
   }, /*#__PURE__*/React.createElement("div", {

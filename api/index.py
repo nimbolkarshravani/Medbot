@@ -54,57 +54,63 @@ def _get_user(request: Request) -> dict:
 
 class LoginRequest(BaseModel):
     email: str
+    redirect_to: str = ""
 
 
-class VerifyRequest(BaseModel):
-    email: str
-    token: str
+class SessionRequest(BaseModel):
+    access_token: str
 
 
 @app.post("/api/auth/login")
 async def auth_login(body: LoginRequest):
-    """Send OTP code via Supabase email (not magic link)"""
+    """Send magic link email via Supabase (works on free tier, no template changes)."""
+    payload = {"email": body.email, "create_user": True}
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            f"{SUPABASE_URL}/auth/v1/otp",
-            json={"email": body.email, "create_user": True},
-            headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
+            f"{SUPABASE_URL}/auth/v1/magiclink",
+            json=payload,
+            headers={
+                "apikey": SUPABASE_ANON_KEY,
+                "Content-Type": "application/json",
+            },
         )
     if resp.status_code >= 400:
-        detail = "Failed to send verification code"
+        detail = "Failed to send magic link"
         try:
             detail = resp.json().get("msg", detail)
         except Exception:
             pass
         raise HTTPException(status_code=400, detail=detail)
-    return {"message": "Check your email for a 6-digit verification code"}
+    return {"message": "Check your email for a magic link"}
 
 
-@app.post("/api/auth/verify")
-async def auth_verify(body: VerifyRequest):
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{SUPABASE_URL}/auth/v1/verify",
-            json={"email": body.email, "token": body.token, "type": "email"},
-            headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
+@app.post("/api/auth/session")
+async def auth_session(body: SessionRequest):
+    """Receive access_token from frontend (after magic link redirect), verify it, set httpOnly cookie."""
+    try:
+        payload = jwt.decode(
+            body.access_token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            audience="authenticated",
         )
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=401, detail="Invalid or expired code")
-    data = resp.json()
-    access_token = data.get("access_token")
-    if not access_token:
-        raise HTTPException(status_code=500, detail="No access token received")
-    user = data.get("user", {})
-    response = JSONResponse(
-        {"user": {"id": user.get("id", ""), "email": user.get("email", "")}}
-    )
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    uid = payload.get("sub")
+    email = payload.get("email", "")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Token missing user ID")
+    exp = payload.get("exp", 0)
+    import time
+    max_age = max(int(exp - time.time()), 60)
+    response = JSONResponse({"user": {"id": uid, "email": email}})
     response.set_cookie(
         "medbot_token",
-        access_token,
+        body.access_token,
         httponly=True,
         secure=True,
         samesite="lax",
-        max_age=data.get("expires_in", 3600),
+        max_age=max_age,
         path="/",
     )
     return response

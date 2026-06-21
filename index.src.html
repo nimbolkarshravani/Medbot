@@ -677,13 +677,33 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-/* ── Auth hook (all auth via backend — zero Supabase SDK) ── */
+/* ── Auth hook (magic link flow — zero Supabase SDK) ── */
 function useAuth() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
 
   useEffect(() => {
+    const hash = window.location.hash;
+    if (hash && hash.includes('access_token=')) {
+      const params = new URLSearchParams(hash.substring(1));
+      const accessToken = params.get('access_token');
+      if (accessToken) {
+        window.history.replaceState(null, '', window.location.pathname);
+        fetch('/api/auth/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ access_token: accessToken }),
+          credentials: 'include',
+        })
+          .then(r => r.ok ? r.json() : Promise.reject())
+          .then(data => setUser(data.user))
+          .catch(() => {})
+          .finally(() => setLoading(false));
+        return;
+      }
+    }
+
     fetch('/api/me', { credentials: 'include' })
       .then(r => {
         if (r.status === 401) return null;
@@ -704,24 +724,8 @@ function useAuth() {
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      return { error: { message: data.detail || 'Failed to send code' } };
+      return { error: { message: data.detail || 'Failed to send magic link' } };
     }
-    return { error: null };
-  };
-
-  const verify = async (email, token) => {
-    const res = await fetch('/api/auth/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, token }),
-      credentials: 'include',
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      return { error: { message: data.detail || 'Invalid code' } };
-    }
-    const data = await res.json();
-    setUser(data.user);
     return { error: null };
   };
 
@@ -730,7 +734,7 @@ function useAuth() {
     setUser(null);
   };
 
-  return { user, loading, authEnabled, signIn, verify, signOut };
+  return { user, loading, authEnabled, signIn, signOut };
 }
 
 /* ── PII patterns ─────────────────────────────────────────────────────── */
@@ -1246,32 +1250,21 @@ function Results({ result, onReset, apiKey, reportText }) {
   );
 }
 
-/* ── Login screen (two-step: email → 6-digit OTP code) ────────────────── */
-function LoginScreen({ onSignIn, onVerify }) {
+/* ── Login screen (magic link — works on Supabase free tier) ──────────── */
+function LoginScreen({ onSignIn }) {
   const [email, setEmail] = useState('');
   const [emailFocus, setEmailFocus] = useState(false);
-  const [code, setCode] = useState('');
-  const [codeFocus, setCodeFocus] = useState(false);
-  const [step, setStep] = useState('email');
+  const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  const handleSendCode = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!email.trim() || busy) return;
     setBusy(true); setErr('');
     const { error } = await onSignIn(email.trim());
     if (error) { setErr(error.message); }
-    else { setStep('code'); }
-    setBusy(false);
-  };
-
-  const handleVerify = async (e) => {
-    e.preventDefault();
-    if (!code.trim() || busy) return;
-    setBusy(true); setErr('');
-    const { error } = await onVerify(email.trim(), code.trim());
-    if (error) { setErr(error.message); }
+    else { setSent(true); }
     setBusy(false);
   };
 
@@ -1282,16 +1275,16 @@ function LoginScreen({ onSignIn, onVerify }) {
         Welcome to<br/><span className="grad">MedBot</span>
       </h1>
       <p className="hero-sub" style={{ marginBottom: 40 }}>
-        Sign in with your email to get started. We'll send you a verification code.
+        Sign in with your email to get started. No password needed — we'll send you a magic link.
       </p>
 
       <div className="login-card">
         <div className="login-icon">⚕</div>
 
-        {step === 'email' && (
-          <form onSubmit={handleSendCode}>
+        {!sent ? (
+          <form onSubmit={handleSubmit}>
             <div className="login-h">Sign In</div>
-            <div className="login-sub">Enter your email and we'll send a verification code</div>
+            <div className="login-sub">Enter your email and we'll send a magic link</div>
 
             <div className="field">
               <label className={`field-label ${email || emailFocus ? 'up' : ''}`}>
@@ -1316,49 +1309,24 @@ function LoginScreen({ onSignIn, onVerify }) {
 
             <button className="btn" type="submit" disabled={busy || !email.trim()}
               style={{ marginTop: 8 }}>
-              {busy ? 'Sending…' : 'Send Verification Code →'}
+              {busy ? 'Sending…' : 'Send Magic Link →'}
             </button>
           </form>
-        )}
-
-        {step === 'code' && (
-          <form onSubmit={handleVerify}>
-            <div className="login-h">Enter Code</div>
-            <div className="login-sub">
-              We sent a 6-digit code to <strong>{email}</strong>
+        ) : (
+          <div>
+            <div className="login-h">Check your email</div>
+            <div className="login-sub" style={{ marginBottom: 20 }}>
+              We sent a magic link to <strong>{email}</strong>
             </div>
-
-            <div className="field">
-              <label className={`field-label ${code || codeFocus ? 'up' : ''}`}>
-                Verification code
-              </label>
-              <input className="field-input" type="text" value={code}
-                onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                onFocus={() => setCodeFocus(true)}
-                onBlur={() => setCodeFocus(false)}
-                placeholder={codeFocus ? '123456' : ''}
-                maxLength={6} autoFocus required
-                style={{ letterSpacing: '0.3em', fontSize: 20, textAlign: 'center' }}
-              />
+            <div className="login-sent">
+              📬 Click the link in your email to sign in
+              <div className="login-sent-sub">Didn't get it? Check your spam folder.</div>
             </div>
-
-            {err && (
-              <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,.08)',
-                border: '1px solid rgba(239,68,68,.2)', borderRadius: 10,
-                fontSize: 13, color: '#dc2626', marginBottom: 16 }}>
-                {err}
-              </div>
-            )}
-
-            <button className="btn" type="submit" disabled={busy || code.length < 6}
-              style={{ marginTop: 8 }}>
-              {busy ? 'Verifying…' : 'Verify & Sign In →'}
-            </button>
-            <button className="btn-back-link" type="button" style={{ marginTop: 16 }}
-              onClick={() => { setStep('email'); setCode(''); setErr(''); }}>
+            <button className="btn-back-link" style={{ marginTop: 16 }}
+              onClick={() => { setSent(false); setEmail(''); }}>
               ← Use a different email
             </button>
-          </form>
+          </div>
         )}
       </div>
     </div>
@@ -1367,7 +1335,7 @@ function LoginScreen({ onSignIn, onVerify }) {
 
 /* ── App ────────────────────────────────────────────────────────────────── */
 function App() {
-  const { user, loading: authLoading, authEnabled, signIn, verify, signOut } = useAuth();
+  const { user, loading: authLoading, authEnabled, signIn, signOut } = useAuth();
   const [key, setKey] = useState(GEMINI_API_KEY);
   const [focused, setFocused] = useState(false);
   const [file, setFile] = useState(null);
@@ -1477,7 +1445,7 @@ function App() {
 
       {/* Login screen — shown when auth is enabled but user is not logged in */}
       {authEnabled && !authLoading && !user && (
-        <LoginScreen onSignIn={signIn} onVerify={verify}/>
+        <LoginScreen onSignIn={signIn}/>
       )}
 
       {/* Upload — shown when logged in (or auth disabled) */}
