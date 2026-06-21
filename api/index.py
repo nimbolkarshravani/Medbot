@@ -76,8 +76,11 @@ async def auth_signup(body: SignUpRequest):
         return {"user": {"id": user.id, "email": user.email}}
     except HTTPException:
         raise
+    except AttributeError as e:
+        raise HTTPException(status_code=500, detail=f"Auth method error: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        error_msg = str(e)
+        raise HTTPException(status_code=400, detail=error_msg if error_msg else "Signup failed")
 
 
 @app.post("/api/auth/login")
@@ -85,12 +88,18 @@ async def auth_login(body: SignInRequest):
     db = get_db()
     try:
         result = db.auth.sign_in_with_password({"email": body.email, "password": body.password})
+    except AttributeError as e:
+        raise HTTPException(status_code=500, detail=f"Auth method error: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        error_msg = str(e)
+        raise HTTPException(status_code=401, detail=error_msg if error_msg else "Login failed")
+
+    if not result or not result.session:
+        raise HTTPException(status_code=500, detail="No session returned")
 
     session = result.session
-    if not session or not session.access_token:
-        raise HTTPException(status_code=500, detail="Failed to get access token")
+    if not session.access_token:
+        raise HTTPException(status_code=500, detail="No access token in session")
 
     user = result.user
     max_age = max(int(session.expires_in or 3600), 60)
@@ -120,7 +129,21 @@ async def auth_logout():
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+    try:
+        db = get_db()
+        if not db:
+            return {"status": "error", "detail": "Supabase client not initialized"}
+        return {
+            "status": "ok",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "supabase": "connected",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "detail": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
 
 # ── Protected ────────────────────────────────────────────────────────────
