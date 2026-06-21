@@ -853,7 +853,38 @@ async function readFile(file) {
   return ext === 'pdf' ? readPDF(file) : file.text();
 }
 
-/* ── Gemini API ─────────────────────────────────────────────────────────── */
+/* ── Backend RAG API calls ──────────────────────────────────────────────── */
+async function uploadReport(fileName, text) {
+  return apiFetch('/reports/upload', {
+    method: 'POST',
+    body: JSON.stringify({
+      file_name: fileName,
+      text
+    })
+  });
+}
+async function analyzeReport(reportId) {
+  return apiFetch(`/reports/${reportId}/analyze`, {
+    method: 'POST'
+  });
+}
+async function chatWithReport(reportId, question, history) {
+  return apiFetch('/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      report_id: reportId,
+      question,
+      history
+    })
+  });
+}
+async function deleteReport(reportId) {
+  return apiFetch(`/reports/${reportId}`, {
+    method: 'DELETE'
+  });
+}
+
+/* ── Fallback: Direct Gemini API (when backend unavailable) ────────────── */
 const PROMPT = report => `You are a warm, friendly doctor explaining medical results in simple language a patient can understand. Analyze this medical report.
 Reply ONLY with valid JSON (no markdown fences, no extra text) matching this exact structure:
 {
@@ -898,55 +929,6 @@ async function callGemini(apiKey, text) {
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('No valid JSON in Gemini response.');
   return JSON.parse(m[0]);
-}
-
-/* ── Gemini Chat API ────────────────────────────────────────────────────── */
-function buildChatContext(reportText, analysis) {
-  const findings = analysis.findings.map(f => `  • [${f.category.toUpperCase()}] ${f.title}: ${f.description}`).join('\n');
-  return [`You are a warm, friendly doctor helping a patient understand their medical report.`, `Answer in plain English. Keep answers to 3 sentences max. Be reassuring but honest.`, `Never diagnose or prescribe — always recommend seeing a real doctor for serious concerns.`, ``, `PATIENT'S REPORT SUMMARY:`, `Type: ${analysis.reportType}`, `Health score: ${analysis.healthScore}/10`, `Overview: ${analysis.summary}`, `Key findings:\n${findings}`, `Recommended actions: ${analysis.actions.join('; ')}`, ``, `ANONYMIZED REPORT TEXT (first 2500 chars):`, reportText.slice(0, 2500)].join('\n');
-}
-async function callGeminiChat(apiKey, reportText, analysis, history, question) {
-  const ctx = buildChatContext(reportText, analysis);
-  const contents = [{
-    role: 'user',
-    parts: [{
-      text: ctx + '\n\nThe patient will now ask follow-up questions.'
-    }]
-  }, {
-    role: 'model',
-    parts: [{
-      text: "I've reviewed the report. I'm here to help — feel free to ask anything."
-    }]
-  }, ...history.map(m => ({
-    role: m.role === 'user' ? 'user' : 'model',
-    parts: [{
-      text: m.text
-    }]
-  })), {
-    role: 'user',
-    parts: [{
-      text: question
-    }]
-  }];
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      contents,
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 512
-      }
-    })
-  });
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({}));
-    throw new Error(e.error?.message || `HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "I'm sorry, I couldn't generate a response.";
 }
 
 /* ── Toast hook ─────────────────────────────────────────────────────────── */
@@ -1089,7 +1071,7 @@ function ConsentModal({
 }
 
 /* ── Loading screen ─────────────────────────────────────────────────────── */
-const STEPS = ['Reading & extracting text', 'Anonymizing personal data', 'Connecting to AI doctor', 'Generating AI analysis', 'Preparing your report'];
+const STEPS = ['Reading & extracting text', 'Anonymizing personal data', 'Uploading & embedding chunks', 'Generating AI analysis', 'Preparing your report'];
 function LoadingScreen({
   step
 }) {
@@ -1116,9 +1098,10 @@ function LoadingScreen({
 /* ── Chat component ─────────────────────────────────────────────────────── */
 const SUGGESTIONS = ["Should I be worried about these results?", "What does this mean for my daily life?", "How can I improve my health score?", "Do I need to see a doctor urgently?", "What does LDL mean?", "How can I lower my cholesterol?"];
 function Chat({
-  apiKey,
+  reportId,
   reportText,
-  analysis
+  analysis,
+  apiKey
 }) {
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState('');
@@ -1141,7 +1124,13 @@ function Chat({
       text: q
     }]);
     try {
-      const reply = await callGeminiChat(apiKey, reportText, analysis, snapshot, q);
+      let reply;
+      if (reportId) {
+        const res = await chatWithReport(reportId, q, snapshot);
+        reply = res.reply;
+      } else {
+        reply = "Chat requires a processed report. Please upload and analyze a report first.";
+      }
       setMsgs(p => [...p, {
         role: 'bot',
         text: reply
@@ -1168,7 +1157,13 @@ function Chat({
     setMsgs(p => p.filter(m => !(m.role === 'error' && m.question === question)));
     setBusy(true);
     try {
-      const reply = await callGeminiChat(apiKey, reportText, analysis, snapshot, question);
+      let reply;
+      if (reportId) {
+        const res = await chatWithReport(reportId, question, snapshot);
+        reply = res.reply;
+      } else {
+        reply = "Chat requires a processed report.";
+      }
       setMsgs(p => [...p, {
         role: 'bot',
         text: reply
@@ -1298,7 +1293,8 @@ function Results({
   result,
   onReset,
   apiKey,
-  reportText
+  reportText,
+  reportId
 }) {
   const icon = cat => cat === 'critical' ? '🔴' : cat === 'warning' ? '🟡' : '🟢';
   const scoreLabel = s => s >= 8 ? 'Excellent Health' : s >= 6 ? 'Good Health' : s >= 4 ? 'Fair Health' : s >= 2 ? 'Poor Health' : 'Critical Condition';
@@ -1396,9 +1392,10 @@ function Results({
   }, a))))), /*#__PURE__*/React.createElement("div", {
     className: "disclaimer"
   }, "⚕️ This analysis is for educational purposes only and does not constitute medical advice. Always consult a qualified healthcare professional for diagnosis and treatment."), /*#__PURE__*/React.createElement(Chat, {
-    apiKey: apiKey,
+    reportId: reportId,
     reportText: reportText,
-    analysis: result
+    analysis: result,
+    apiKey: apiKey
   }));
 }
 
@@ -1565,6 +1562,7 @@ function App() {
   const [screen, setScreen] = useState('upload'); // upload | loading | results
   const [step, setStep] = useState(0);
   const [result, setResult] = useState(null);
+  const [reportId, setReportId] = useState(null);
   const [anonText, setAnonText] = useState('');
   const [consent, setConsent] = useState(false);
   const ref = useRef(null);
@@ -1590,7 +1588,7 @@ function App() {
     setFile(f);
     toast(`${f.name} ready`, 'success');
   }, [toast]);
-  const canGo = key.trim().length > 8 && file !== null;
+  const canGo = file !== null && (GEMINI_API_KEY || key.trim().length > 8 || authEnabled);
   const begin = async () => {
     if (!canGo) return;
     try {
@@ -1608,18 +1606,25 @@ function App() {
       setScreen('upload');
     }
   };
-
-  /* Extracted so both confirmConsent and the Retry button can call it */
   const runAnalysis = useCallback(async textToAnalyze => {
     setScreen('loading');
     setStep(2);
     try {
       await new Promise(r => setTimeout(r, 400));
       setStep(3);
-      const r = await callGemini(key, textToAnalyze);
+      let analysisResult;
+      if (authEnabled && user) {
+        const uploadRes = await uploadReport(file?.name || 'report.txt', textToAnalyze);
+        const rid = uploadRes.report_id;
+        setReportId(rid);
+        const analyzeRes = await analyzeReport(rid);
+        analysisResult = analyzeRes.analysis;
+      } else {
+        analysisResult = await callGemini(key, textToAnalyze);
+      }
       setStep(4);
       await new Promise(res => setTimeout(res, 300));
-      setResult(r);
+      setResult(analysisResult);
       setScreen('results');
       toast('Analysis complete!', 'success');
     } catch (e) {
@@ -1630,7 +1635,7 @@ function App() {
         setScreen('upload');
       }
     }
-  }, [key]);
+  }, [key, authEnabled, user, file]);
   const confirmConsent = async () => {
     setConsent(false);
     await runAnalysis(anonText);
@@ -1639,6 +1644,7 @@ function App() {
     setScreen('upload');
     setFile(null);
     setResult(null);
+    setReportId(null);
     setAnonText('');
     setStep(0);
   };
@@ -1685,7 +1691,7 @@ function App() {
     className: "hero-sub"
   }, "Upload any medical report and receive plain-English insights from MedBot, your AI medical analyst — with automatic privacy protection built in."), /*#__PURE__*/React.createElement("div", {
     className: "card upload-card"
-  }, !GEMINI_API_KEY && /*#__PURE__*/React.createElement("div", {
+  }, !GEMINI_API_KEY && !(authEnabled && user) && /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", {
     className: `field-label ${key || focused ? 'up' : ''}`
@@ -1752,7 +1758,7 @@ function App() {
     className: "btn",
     onClick: begin,
     disabled: !canGo
-  }, canGo ? 'Analyze with MedBot →' : !key ? GEMINI_API_KEY ? 'Upload a report to continue' : 'Enter your Gemini API key to continue' : 'Upload a report to continue'), /*#__PURE__*/React.createElement("div", {
+  }, canGo ? 'Analyze with MedBot →' : !file ? authEnabled && user ? 'Upload a report to continue' : !key && !GEMINI_API_KEY ? 'Enter your Gemini API key to continue' : 'Upload a report to continue' : 'Upload a report to continue'), /*#__PURE__*/React.createElement("div", {
     className: "note"
   }, "🔒 PII auto-removed before AI · No data stored · Educational use only")), /*#__PURE__*/React.createElement("div", {
     className: "features"
@@ -1783,7 +1789,8 @@ function App() {
     result: result,
     onReset: reset,
     apiKey: key,
-    reportText: anonText
+    reportText: anonText,
+    reportId: reportId
   }), isLoggedIn && consent && /*#__PURE__*/React.createElement(ConsentModal, {
     preview: anonText,
     onConfirm: confirmConsent,
