@@ -428,6 +428,7 @@ def chat_rag(body: ChatRequest, request: Request):
     user = _get_user(request)
     db = get_admin_db()
 
+    # Verify the current report belongs to this user
     report_result = (
         db.table("reports")
         .select("*")
@@ -438,57 +439,75 @@ def chat_rag(body: ChatRequest, request: Request):
     if not report_result.data:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    report = report_result.data[0]
+    current_report = report_result.data[0]
 
+    # Retrieve across ALL user reports (the core RAG value)
     query_embedding = get_query_embedding(body.question)
 
     try:
         match_result = db.rpc("match_chunks", {
             "query_embedding": query_embedding,
-            "match_count": 4,
-            "filter_report_id": body.report_id,
+            "match_count": 8,
+            "patient_id_filter": user["id"],
         }).execute()
-        relevant_chunks = [r["chunk_text"] for r in match_result.data] if match_result.data else []
+        retrieved = match_result.data if match_result.data else []
     except Exception:
+        # Fallback: fetch from all user's chunks without vector search
         chunks_result = (
             db.table("chunks")
-            .select("chunk_text")
-            .eq("report_id", body.report_id)
+            .select("chunk_text, report_id")
+            .eq("patient_id", user["id"])
             .order("id")
-            .limit(4)
+            .limit(8)
             .execute()
         )
-        relevant_chunks = [c["chunk_text"] for c in chunks_result.data] if chunks_result.data else []
+        retrieved = [{"chunk_text": c["chunk_text"], "report_id": c["report_id"], "uploaded_at": None} for c in chunks_result.data] if chunks_result.data else []
 
-    context_text = "\n---\n".join(relevant_chunks)
+    # Build context with report dates so the LLM can reference trends
+    context_parts = []
+    for chunk in retrieved:
+        date_label = ""
+        if chunk.get("uploaded_at"):
+            date_label = chunk["uploaded_at"][:10]
+        elif chunk.get("report_id") == body.report_id:
+            date_label = (current_report.get("uploaded_at") or "")[:10]
+        prefix = f"[Report {date_label}]" if date_label else "[Report]"
+        context_parts.append(f"{prefix}: {chunk['chunk_text']}")
 
+    context_text = "\n---\n".join(context_parts)
+
+    # Include current report's analysis summary
     analysis_summary = ""
-    if report.get("analysis"):
-        a = report["analysis"]
+    if current_report.get("analysis"):
+        a = current_report["analysis"]
         findings_str = "\n".join(
             f"  - [{f['category'].upper()}] {f['title']}: {f['description']}"
             for f in a.get("findings", [])
         )
         analysis_summary = f"""
-Report Type: {a.get('reportType', 'Unknown')}
+Current Report Type: {a.get('reportType', 'Unknown')}
 Health Score: {a.get('healthScore', '?')}/10
 Summary: {a.get('summary', '')}
 Findings:
 {findings_str}
 Actions: {'; '.join(a.get('actions', []))}"""
 
-    system_prompt = f"""You are a warm, friendly doctor helping a patient understand their medical report.
-Answer in plain English. Keep answers to 3 sentences max. Be reassuring but honest.
+    system_prompt = f"""You are a warm, friendly doctor helping a patient understand their medical reports.
+You have access to the patient's medical history across multiple reports.
+When answering questions, reference the report dates to show trends or comparisons.
+If asked about changes over time, compare values across the retrieved report chunks.
+Always cite which report (by date) a value came from.
+Answer in plain English. Keep answers concise. Be reassuring but honest.
 Never diagnose or prescribe — always recommend seeing a real doctor for serious concerns.
 
-ANALYSIS SUMMARY:{analysis_summary}
+CURRENT REPORT ANALYSIS:{analysis_summary}
 
-RELEVANT REPORT SECTIONS:
+RETRIEVED SECTIONS FROM PATIENT'S REPORTS:
 {context_text}"""
 
     contents = [
         {"role": "user", "parts": [{"text": system_prompt + "\n\nThe patient will now ask follow-up questions."}]},
-        {"role": "model", "parts": [{"text": "I've reviewed the report. I'm here to help — feel free to ask anything."}]},
+        {"role": "model", "parts": [{"text": "I've reviewed your reports. I can see data across your medical history — feel free to ask anything, including comparisons over time."}]},
     ]
 
     for msg in body.history[-10:]:
