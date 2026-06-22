@@ -522,7 +522,42 @@ RETRIEVED SECTIONS FROM PATIENT'S REPORTS:
         generation_config=genai.GenerationConfig(temperature=0.7, max_output_tokens=512),
     )
 
-    return {"reply": response.text.strip()}
+    reply = response.text.strip()
+
+    # Save user message and assistant response to DB
+    try:
+        db.table("chat_messages").insert({
+            "patient_id": user["id"],
+            "role": "user",
+            "content": body.question,
+            "referenced_report_ids": [body.report_id],
+        }).execute()
+        db.table("chat_messages").insert({
+            "patient_id": user["id"],
+            "role": "assistant",
+            "content": reply,
+        }).execute()
+    except Exception as e:
+        pass  # Non-critical; still return the response
+
+    return {"reply": reply}
+
+
+@app.get("/api/chat/history")
+def get_chat_history(request: Request):
+    """Get last 50 chat messages for the user."""
+    user = _get_user(request)
+    db = get_admin_db()
+    result = (
+        db.table("chat_messages")
+        .select("*")
+        .eq("patient_id", user["id"])
+        .order("created_at", desc=False)
+        .limit(50)
+        .execute()
+    )
+    return {"messages": result.data or []}
+
 
 
 # ── Reports: List ───────────────────────────────────────────────────────
