@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
     report_id UUID REFERENCES reports(id) ON DELETE CASCADE,
     chunk_text TEXT,
-    embedding VECTOR(3072),
+    embedding VECTOR(768),
     metadata JSONB,
     created_at TIMESTAMP DEFAULT NOW()
 );
