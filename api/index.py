@@ -378,7 +378,13 @@ def analyze_report(report_id: str, request: Request):
 
     prompt = f"""Analyze this medical report. You are a warm, friendly doctor explaining results in simple language.
 
-Rules: max 6 findings, prioritize critical first, plain English throughout, no jargon without explanation.
+CRITICAL: healthScore must be an integer from 1 to 10 (NOT a percentage, NOT out of 100).
+- 10 = perfect health, everything normal
+- 7-9 = mostly healthy, minor concerns
+- 4-6 = moderate concerns, needs attention
+- 1-3 = urgent issues requiring immediate care
+
+Keep descriptions short (1-2 sentences max). Max 6 findings. Prioritize critical first.
 
 Medical Report:
 {full_text[:8000]}"""
@@ -388,28 +394,28 @@ Medical Report:
         prompt,
         generation_config={
             "temperature": 0.25,
-            "max_output_tokens": 2048,
+            "max_output_tokens": 8192,
             "response_mime_type": "application/json",
             "response_schema": {
                 "type": "object",
                 "properties": {
-                    "reportType": {"type": "string"},
-                    "healthScore": {"type": "integer"},
-                    "summary": {"type": "string"},
+                    "reportType": {"type": "string", "description": "Short report type label"},
+                    "healthScore": {"type": "integer", "description": "1-10 scale only. 1=critical, 10=perfect."},
+                    "summary": {"type": "string", "description": "One sentence overall health picture"},
                     "findings": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "category": {"type": "string"},
+                                "category": {"type": "string", "description": "critical, warning, or normal"},
                                 "title": {"type": "string"},
-                                "description": {"type": "string"},
+                                "description": {"type": "string", "description": "Max 2 short sentences"},
                             },
                             "required": ["category", "title", "description"],
                         },
                     },
                     "actions": {"type": "array", "items": {"type": "string"}},
-                    "drAidenNote": {"type": "string"},
+                    "drAidenNote": {"type": "string", "description": "Warm 1-sentence reassuring note"},
                 },
                 "required": ["reportType", "healthScore", "summary", "findings", "actions", "drAidenNote"],
             },
@@ -428,6 +434,11 @@ Medical Report:
             analysis = json.loads(match.group(0))
         except json.JSONDecodeError:
             raise HTTPException(status_code=500, detail=f"AI returned invalid JSON: {raw[:200]}")
+
+    # Clamp healthScore to 1-10 range
+    score = analysis.get("healthScore", 5)
+    if score > 10:
+        analysis["healthScore"] = max(1, min(10, round(score / 10)))
 
     db.table("reports").update({"analysis": analysis}).eq("id", report_id).execute()
 
