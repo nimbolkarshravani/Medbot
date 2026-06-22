@@ -10,7 +10,7 @@ ALTER TABLE reports ADD COLUMN IF NOT EXISTS analysis JSONB;
 
 -- 2. Create the match_chunks RPC function for vector similarity search
 CREATE OR REPLACE FUNCTION match_chunks(
-    query_embedding VECTOR(768),
+    query_embedding VECTOR(3072),
     match_count INT DEFAULT 4,
     filter_report_id UUID DEFAULT NULL
 )
