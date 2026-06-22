@@ -251,6 +251,22 @@ def health_check():
         }
 
 
+@app.get("/api/diagnostics/embedding-models")
+def list_embedding_models():
+    """List all available embedding models on the configured Gemini API key."""
+    try:
+        available = []
+        for model in genai.list_models():
+            if "embedContent" in model.supported_generation_methods:
+                available.append({
+                    "name": model.name,
+                    "display_name": model.display_name,
+                })
+        return {"embedding_models": available}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # ── Protected ────────────────────────────────────────────────────────────
 
 @app.get("/api/me")
