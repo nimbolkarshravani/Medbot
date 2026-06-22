@@ -1854,16 +1854,21 @@ function MyReportsPage({
 }
 
 /* ── Chat Split-Screen ──────────────────────────────────────────────────────── */
-function ChatSplitScreen() {
+function ChatSplitScreen({
+  initialReportId
+}) {
   const [reports, setReports] = useState([]);
-  const [selectedReportId, setSelectedReportId] = useState(null);
-  const [selectedReport, setSelectedReport] = useState(null);
+  const [selectedReportId, setSelectedReportId] = useState(initialReportId || null);
+  const [reportText, setReportText] = useState('');
+  const [loadingText, setLoadingText] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [chatError, setChatError] = useState('');
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
   const {
+    list: toasts,
     add: toast
   } = useToast();
   const SUGGESTIONS = ["Compare my recent reports", "Is my cholesterol improving?", "What should I focus on next?", "Explain my latest results"];
@@ -1871,17 +1876,25 @@ function ChatSplitScreen() {
     apiFetch('/reports').then(data => {
       const rpts = data.reports || [];
       setReports(rpts);
-      if (rpts.length > 0) {
+      if (!selectedReportId && rpts.length > 0) {
         setSelectedReportId(rpts[0].id);
-        setSelectedReport(rpts[0]);
       }
     }).catch(e => toast('Failed to load reports', 'error'));
     apiFetch('/chat/history').then(data => {
       setChatMessages(data.messages || []);
-    }).catch(() => {
-      setChatMessages([]);
-    });
+    }).catch(() => {});
   }, []);
+  useEffect(() => {
+    if (!selectedReportId) return;
+    setLoadingText(true);
+    apiFetch(`/reports/${selectedReportId}`).then(data => {
+      setReportText(data.report?.full_text || 'No report text available');
+      setLoadingText(false);
+    }).catch(() => {
+      setReportText('Failed to load report text');
+      setLoadingText(false);
+    });
+  }, [selectedReportId]);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({
       behavior: 'smooth'
@@ -1892,18 +1905,24 @@ function ChatSplitScreen() {
     if (!q || busy || !selectedReportId) return;
     setInput('');
     setBusy(true);
+    setChatError('');
+    const userMsg = {
+      role: 'user',
+      content: q,
+      created_at: new Date().toISOString()
+    };
+    setChatMessages(p => [...p, userMsg]);
     try {
-      setChatMessages(p => [...p, {
-        role: 'user',
-        content: q,
-        created_at: new Date().toISOString()
-      }]);
+      const historyForApi = chatMessages.slice(-10).map(m => ({
+        role: m.role === 'assistant' ? 'bot' : m.role,
+        text: m.content
+      }));
       const res = await apiFetch('/chat', {
         method: 'POST',
         body: JSON.stringify({
           report_id: selectedReportId,
           question: q,
-          history: chatMessages
+          history: historyForApi
         })
       });
       setChatMessages(p => [...p, {
@@ -1912,6 +1931,7 @@ function ChatSplitScreen() {
         created_at: new Date().toISOString()
       }]);
     } catch (e) {
+      setChatError(e.message);
       toast('Chat failed: ' + e.message, 'error');
     } finally {
       setBusy(false);
@@ -1927,7 +1947,7 @@ function ChatSplitScreen() {
     style: {
       display: 'flex',
       gap: '16px',
-      height: 'calc(100vh - 80px)',
+      height: 'calc(100vh - 120px)',
       padding: '16px',
       maxWidth: '100%',
       overflow: 'hidden'
@@ -1950,14 +1970,16 @@ function ChatSplitScreen() {
       alignItems: 'center',
       gap: '8px'
     }
-  }, /*#__PURE__*/React.createElement("select", {
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: '13px',
+      fontWeight: '700',
+      color: '#94a3b8',
+      whiteSpace: 'nowrap'
+    }
+  }, "Viewing:"), /*#__PURE__*/React.createElement("select", {
     value: selectedReportId || '',
-    onChange: e => {
-      const rid = e.target.value;
-      setSelectedReportId(rid);
-      const r = reports.find(rp => rp.id === rid);
-      setSelectedReport(r);
-    },
+    onChange: e => setSelectedReportId(e.target.value),
     style: {
       flex: 1,
       padding: '8px 12px',
@@ -1968,73 +1990,31 @@ function ChatSplitScreen() {
   }, reports.map(r => /*#__PURE__*/React.createElement("option", {
     key: r.id,
     value: r.id
-  }, r.file_name, " — ", new Date(r.uploaded_at).toLocaleDateString())))), selectedReport?.analysis ? /*#__PURE__*/React.createElement("div", {
+  }, r.file_name, " — ", new Date(r.uploaded_at).toLocaleDateString())))), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       overflowY: 'auto',
-      padding: '20px',
-      fontSize: '13px',
-      lineHeight: '1.6'
+      padding: '20px'
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, loadingText ? /*#__PURE__*/React.createElement("div", {
     style: {
-      marginBottom: '16px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '11px',
-      fontWeight: '700',
-      color: '#94a3b8',
-      textTransform: 'uppercase',
-      marginBottom: '4px'
-    }
-  }, selectedReport.analysis.reportType), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '18px',
-      fontWeight: '900',
-      background: 'linear-gradient(135deg, #14b8a6, #06b6d4)',
-      WebkitBackgroundClip: 'text',
-      WebkitTextFillColor: 'transparent'
-    }
-  }, "Score: ", selectedReport.analysis.healthScore, "/10"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: '8px',
-      color: '#64748b'
-    }
-  }, selectedReport.analysis.summary)), selectedReport.analysis.findings?.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: '700',
-      marginBottom: '8px'
-    }
-  }, "Findings:"), selectedReport.analysis.findings.map((f, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      marginBottom: '8px',
-      paddingLeft: '12px',
-      borderLeft: `2px solid ${f.category === 'critical' ? '#ef4444' : f.category === 'warning' ? '#f59e0b' : '#10b981'}`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: '600',
-      fontSize: '12px'
-    }
-  }, f.title), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '12px',
-      color: '#64748b',
-      marginTop: '2px'
-    }
-  }, f.description))))) : /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
+      textAlign: 'center',
+      padding: '40px',
       color: '#94a3b8'
     }
-  }, "No analysis available")), /*#__PURE__*/React.createElement("div", {
+  }, "Loading report…") : /*#__PURE__*/React.createElement("pre", {
     style: {
-      flex: '0 0 45%',
+      fontFamily: "'Courier New', monospace",
+      fontSize: '12.5px',
+      lineHeight: '1.65',
+      color: '#374151',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+      margin: 0
+    }
+  }, reportText))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: '0 0 calc(45% - 16px)',
       display: 'flex',
       flexDirection: 'column',
       background: '#fff',
@@ -2048,7 +2028,7 @@ function ChatSplitScreen() {
       borderBottom: '1px solid rgba(0,0,0,.06)',
       fontWeight: '700'
     }
-  }, "💬 Ask MedBot"), chatMessages.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "💬 Ask MedBot"), chatMessages.length === 0 && !busy ? /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       padding: '20px',
@@ -2064,7 +2044,7 @@ function ChatSplitScreen() {
       color: '#94a3b8',
       marginBottom: '12px'
     }
-  }, "Start a conversation"), /*#__PURE__*/React.createElement("div", {
+  }, "Start a conversation about your reports"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexWrap: 'wrap',
@@ -2096,11 +2076,11 @@ function ChatSplitScreen() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      maxWidth: '75%',
+      maxWidth: '80%',
       padding: '12px 14px',
-      borderRadius: '12px',
+      borderRadius: '14px',
       fontSize: '13px',
-      lineHeight: '1.5',
+      lineHeight: '1.6',
       background: m.role === 'user' ? 'linear-gradient(135deg, #14b8a6, #06b6d4)' : '#f1f5f9',
       color: m.role === 'user' ? '#fff' : '#0f172a'
     }
@@ -2116,7 +2096,16 @@ function ChatSplitScreen() {
     className: "dot"
   }), /*#__PURE__*/React.createElement("span", {
     className: "dot"
-  })), /*#__PURE__*/React.createElement("div", {
+  })), chatError && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '10px 14px',
+      background: 'rgba(239,68,68,.08)',
+      border: '1px solid rgba(239,68,68,.2)',
+      borderRadius: '10px',
+      fontSize: '13px',
+      color: '#dc2626'
+    }
+  }, chatError), /*#__PURE__*/React.createElement("div", {
     ref: bottomRef
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2151,7 +2140,14 @@ function ChatSplitScreen() {
     style: {
       marginBottom: 0
     }
-  }, busy ? '…' : '↑'))));
+  }, busy ? '…' : '↑'))), /*#__PURE__*/React.createElement("div", {
+    className: "toasts"
+  }, toasts.map(t => /*#__PURE__*/React.createElement("div", {
+    key: t.id,
+    className: `toast ${t.type}`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "toast-icon"
+  }, t.type === 'success' ? '✓' : t.type === 'error' ? '✕' : 'ℹ'), t.msg))));
 }
 
 /* ── App ────────────────────────────────────────────────────────────────── */
@@ -2495,7 +2491,9 @@ function App() {
       setReportId(reportId);
       setTab('chat');
     }
-  }), isLoggedIn && user && tab === 'chat' && /*#__PURE__*/React.createElement(ChatSplitScreen, null), isLoggedIn && consent && /*#__PURE__*/React.createElement(ConsentModal, {
+  }), isLoggedIn && user && tab === 'chat' && /*#__PURE__*/React.createElement(ChatSplitScreen, {
+    initialReportId: reportId
+  }), isLoggedIn && consent && /*#__PURE__*/React.createElement(ConsentModal, {
     preview: anonText,
     onConfirm: confirmConsent,
     onCancel: () => {

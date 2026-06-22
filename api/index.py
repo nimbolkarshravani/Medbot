@@ -589,6 +589,36 @@ def get_chat_history(request: Request):
     return {"messages": result.data or []}
 
 
+# ── Reports: Get single report with text ────────────────────────────────
+
+@app.get("/api/reports/{report_id}")
+def get_report(report_id: str, request: Request):
+    user = _get_user(request)
+    db = get_admin_db()
+    report_result = (
+        db.table("reports")
+        .select("*")
+        .eq("id", report_id)
+        .eq("patient_id", user["id"])
+        .execute()
+    )
+    if not report_result.data:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    report = report_result.data[0]
+
+    chunks_result = (
+        db.table("chunks")
+        .select("chunk_text")
+        .eq("report_id", report_id)
+        .order("id")
+        .execute()
+    )
+    report["full_text"] = "\n".join(c["chunk_text"] for c in chunks_result.data) if chunks_result.data else ""
+
+    return {"report": report}
+
+
 
 # ── Reports: List ───────────────────────────────────────────────────────
 
