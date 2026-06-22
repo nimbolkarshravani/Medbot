@@ -20,6 +20,7 @@ import google.generativeai as genai
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
@@ -39,13 +40,24 @@ app.add_middleware(
 )
 
 _client: Client | None = None
+_admin_client: Client | None = None
 
 
 def get_db() -> Client:
+    """Anon client — used only for auth verification (get_user)."""
     global _client
     if _client is None:
-        _client = create_client(SUPABASE_URL, SUPABASE_KEY or SUPABASE_ANON_KEY)
+        _client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY or SUPABASE_KEY)
     return _client
+
+
+def get_admin_db() -> Client:
+    """Service role client — bypasses RLS for all DB reads/writes."""
+    global _admin_client
+    if _admin_client is None:
+        key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY or SUPABASE_ANON_KEY
+        _admin_client = create_client(SUPABASE_URL, key)
+    return _admin_client
 
 
 def _get_user(request: Request) -> dict:
@@ -261,7 +273,7 @@ def upload_report(body: ReportUpload, request: Request):
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="Report text is empty")
 
-    db = get_db()
+    db = get_admin_db()
 
     redacted = redact_pii(body.text)
     chunks = chunk_text(redacted)
@@ -313,7 +325,7 @@ def upload_report(body: ReportUpload, request: Request):
 @app.post("/api/reports/{report_id}/analyze")
 def analyze_report(report_id: str, request: Request):
     user = _get_user(request)
-    db = get_db()
+    db = get_admin_db()
 
     report_result = (
         db.table("reports")
@@ -392,7 +404,7 @@ class ChatRequest(BaseModel):
 @app.post("/api/chat")
 def chat_rag(body: ChatRequest, request: Request):
     user = _get_user(request)
-    db = get_db()
+    db = get_admin_db()
 
     report_result = (
         db.table("reports")
@@ -477,7 +489,7 @@ RELEVANT REPORT SECTIONS:
 @app.get("/api/reports")
 def list_reports(request: Request):
     user = _get_user(request)
-    db = get_db()
+    db = get_admin_db()
     result = (
         db.table("reports")
         .select("*")
@@ -493,7 +505,7 @@ def list_reports(request: Request):
 @app.delete("/api/reports/{report_id}")
 def delete_report(report_id: str, request: Request):
     user = _get_user(request)
-    db = get_db()
+    db = get_admin_db()
 
     db.table("chunks").delete().eq("report_id", report_id).eq("patient_id", user["id"]).execute()
     db.table("reports").delete().eq("id", report_id).eq("patient_id", user["id"]).execute()
