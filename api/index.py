@@ -376,7 +376,18 @@ def analyze_report(report_id: str, request: Request):
 
     full_text = "\n".join(c["chunk_text"] for c in chunks_result.data)
 
-    prompt = f"""Analyze this medical report. You are a warm, friendly doctor explaining results in simple language.
+    prompt = f"""You are a warm, friendly doctor explaining medical results in simple language. Analyze this medical report.
+Reply ONLY with valid JSON (no markdown, no extra text) matching this exact structure:
+{{
+  "reportType": "short report type label",
+  "healthScore": <integer 1-10>,
+  "summary": "One sentence overall health picture in plain English",
+  "findings": [
+    {{ "category": "critical|warning|normal", "title": "...", "description": "Max 2 short plain-English sentences" }}
+  ],
+  "actions": ["Action 1", "Action 2", "Action 3"],
+  "drAidenNote": "Warm, reassuring 1-sentence note"
+}}
 
 CRITICAL: healthScore must be an integer from 1 to 10 (NOT a percentage, NOT out of 100).
 - 10 = perfect health, everything normal
@@ -384,45 +395,26 @@ CRITICAL: healthScore must be an integer from 1 to 10 (NOT a percentage, NOT out
 - 4-6 = moderate concerns, needs attention
 - 1-3 = urgent issues requiring immediate care
 
-Keep descriptions short (1-2 sentences max). Max 6 findings. Prioritize critical first.
+Keep descriptions short. Max 6 findings. Prioritize critical first.
 
 Medical Report:
 {full_text[:8000]}"""
 
-    model = genai.GenerativeModel("gemini-2.5-flash")
-    response = model.generate_content(
-        prompt,
-        generation_config={
-            "temperature": 0.25,
-            "max_output_tokens": 8192,
-            "response_mime_type": "application/json",
-            "response_schema": {
-                "type": "object",
-                "properties": {
-                    "reportType": {"type": "string", "description": "Short report type label"},
-                    "healthScore": {"type": "integer", "description": "1-10 scale only. 1=critical, 10=perfect."},
-                    "summary": {"type": "string", "description": "One sentence overall health picture"},
-                    "findings": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "category": {"type": "string", "description": "critical, warning, or normal"},
-                                "title": {"type": "string"},
-                                "description": {"type": "string", "description": "Max 2 short sentences"},
-                            },
-                            "required": ["category", "title", "description"],
-                        },
-                    },
-                    "actions": {"type": "array", "items": {"type": "string"}},
-                    "drAidenNote": {"type": "string", "description": "Warm 1-sentence reassuring note"},
-                },
-                "required": ["reportType", "healthScore", "summary", "findings", "actions", "drAidenNote"],
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.25,
+                "max_output_tokens": 4096,
+                "response_mime_type": "application/json",
             },
-        },
-    )
+        )
+        raw = response.text
+    except Exception as e:
+        db.table("reports").update({"status": "error"}).eq("id", report_id).execute()
+        raise HTTPException(status_code=500, detail=f"Gemini error: {type(e).__name__}: {str(e)}")
 
-    raw = response.text
     try:
         analysis = json.loads(raw)
     except json.JSONDecodeError:
@@ -435,10 +427,14 @@ Medical Report:
         except json.JSONDecodeError:
             raise HTTPException(status_code=500, detail=f"AI returned invalid JSON: {raw[:200]}")
 
-    # Clamp healthScore to 1-10 range
-    score = analysis.get("healthScore", 5)
-    if score > 10:
-        analysis["healthScore"] = max(1, min(10, round(score / 10)))
+    # Clamp healthScore to 1-10 range (guard against strings/percentages)
+    try:
+        score = int(float(analysis.get("healthScore", 5)))
+        if score > 10:
+            score = round(score / 10)
+        analysis["healthScore"] = max(1, min(10, score))
+    except (TypeError, ValueError):
+        analysis["healthScore"] = 5
 
     db.table("reports").update({"analysis": analysis}).eq("id", report_id).execute()
 
