@@ -133,20 +133,26 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 150) -> List[str
 
 # ── Embeddings ──────────────────────────────────────────────────────────
 
+EMBED_MODEL = "models/gemini-embedding-001"
+EMBED_DIMS = 768
+
+
 def get_embeddings(texts: List[str]) -> List[List[float]]:
     result = genai.embed_content(
-        model="models/gemini-embedding-2",
+        model=EMBED_MODEL,
         content=texts,
         task_type="retrieval_document",
+        output_dimensionality=EMBED_DIMS,
     )
     return result['embedding']
 
 
 def get_query_embedding(text: str) -> List[float]:
     result = genai.embed_content(
-        model="models/gemini-embedding-2",
+        model=EMBED_MODEL,
         content=text,
         task_type="retrieval_query",
+        output_dimensionality=EMBED_DIMS,
     )
     return result['embedding']
 
