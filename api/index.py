@@ -578,15 +578,18 @@ def get_chat_history(request: Request):
     """Get last 50 chat messages for the user."""
     user = _get_user(request)
     db = get_admin_db()
-    result = (
-        db.table("chat_messages")
-        .select("*")
-        .eq("patient_id", user["id"])
-        .order("created_at", desc=False)
-        .limit(50)
-        .execute()
-    )
-    return {"messages": result.data or []}
+    try:
+        result = (
+            db.table("chat_messages")
+            .select("*")
+            .eq("patient_id", user["id"])
+            .order("created_at", desc=False)
+            .limit(50)
+            .execute()
+        )
+        return {"messages": result.data or []}
+    except Exception:
+        return {"messages": []}
 
 
 # ── Reports: Get single report with text ────────────────────────────────
