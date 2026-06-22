@@ -376,18 +376,7 @@ def analyze_report(report_id: str, request: Request):
 
     full_text = "\n".join(c["chunk_text"] for c in chunks_result.data)
 
-    prompt = f"""You are a warm, friendly doctor explaining medical results in simple language a patient can understand. Analyze this medical report.
-Reply ONLY with valid JSON (no markdown fences, no extra text) matching this exact structure:
-{{
-  "reportType": "short report type",
-  "healthScore": <integer 1-10, where 1=critical emergency, 10=perfect health>,
-  "summary": "One sentence overall health picture in plain English",
-  "findings": [
-    {{ "category": "critical|warning|normal", "title": "...", "description": "Max 2 plain-English sentences. Explain jargon." }}
-  ],
-  "actions": ["Action 1", "Action 2", "Action 3"],
-  "drAidenNote": "Warm, reassuring 1-sentence note to help the patient feel informed and supported"
-}}
+    prompt = f"""Analyze this medical report. You are a warm, friendly doctor explaining results in simple language.
 
 Rules: max 6 findings, prioritize critical first, plain English throughout, no jargon without explanation.
 
@@ -397,18 +386,48 @@ Medical Report:
     model = genai.GenerativeModel("gemini-2.5-flash")
     response = model.generate_content(
         prompt,
-        generation_config=genai.GenerationConfig(temperature=0.25, max_output_tokens=2048),
+        generation_config={
+            "temperature": 0.25,
+            "max_output_tokens": 2048,
+            "response_mime_type": "application/json",
+            "response_schema": {
+                "type": "object",
+                "properties": {
+                    "reportType": {"type": "string"},
+                    "healthScore": {"type": "integer"},
+                    "summary": {"type": "string"},
+                    "findings": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "category": {"type": "string"},
+                                "title": {"type": "string"},
+                                "description": {"type": "string"},
+                            },
+                            "required": ["category", "title", "description"],
+                        },
+                    },
+                    "actions": {"type": "array", "items": {"type": "string"}},
+                    "drAidenNote": {"type": "string"},
+                },
+                "required": ["reportType", "healthScore", "summary", "findings", "actions", "drAidenNote"],
+            },
+        },
     )
 
     raw = response.text
-    match = re.search(r'\{[\s\S]*\}', raw)
-    if not match:
-        raise HTTPException(status_code=500, detail="AI did not return valid JSON")
-
     try:
-        analysis = json.loads(match.group(0))
+        analysis = json.loads(raw)
     except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="AI returned invalid JSON")
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        match = re.search(r'\{[\s\S]*\}', cleaned)
+        if not match:
+            raise HTTPException(status_code=500, detail=f"AI did not return valid JSON: {raw[:200]}")
+        try:
+            analysis = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=500, detail=f"AI returned invalid JSON: {raw[:200]}")
 
     db.table("reports").update({"analysis": analysis}).eq("id", report_id).execute()
 
