@@ -1571,7 +1571,9 @@ function AuthScreens({
 
 /* ── My Reports Page ────────────────────────────────────────────────────────── */
 function MyReportsPage({
-  onViewAnalysis
+  selectedForDetail,
+  onSelectReport,
+  onAskMedBot
 }) {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1599,8 +1601,136 @@ function MyReportsPage({
       toast('Delete failed: ' + e.message, 'error');
     }
   };
-  const scoreColor = score => score >= 8 ? 'good' : score >= 5 ? 'warning' : 'critical';
-  const scoreLabel = score => score >= 8 ? 'Good' : score >= 5 ? 'Fair' : 'Poor';
+  if (selectedForDetail) {
+    const r = selectedForDetail;
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        maxWidth: '900px',
+        margin: '0 auto',
+        padding: '24px'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => onSelectReport(null),
+      style: {
+        background: 'none',
+        border: 'none',
+        color: '#14b8a6',
+        fontSize: '14px',
+        fontWeight: '600',
+        cursor: 'pointer',
+        marginBottom: '24px'
+      }
+    }, "← Back to Reports"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: '#fff',
+        border: '1px solid rgba(20,184,166,.14)',
+        borderRadius: '16px',
+        padding: '40px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '13px',
+        color: '#94a3b8',
+        textTransform: 'uppercase',
+        marginBottom: '8px'
+      }
+    }, r.file_name), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '13px',
+        color: '#94a3b8',
+        marginBottom: '24px'
+      }
+    }, new Date(r.uploaded_at).toLocaleDateString()), r.analysis ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '28px',
+        fontWeight: '900',
+        background: 'linear-gradient(135deg, #14b8a6, #06b6d4)',
+        WebkitBackgroundClip: 'text',
+        WebkitTextFillColor: 'transparent',
+        marginBottom: '8px'
+      }
+    }, r.analysis.reportType), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'inline-block',
+        padding: '8px 16px',
+        background: `rgba(${r.analysis.healthScore >= 8 ? '16,185,129' : r.analysis.healthScore >= 5 ? '245,158,11' : '239,68,68'},.1)`,
+        borderRadius: '8px',
+        fontSize: '14px',
+        fontWeight: '700',
+        color: r.analysis.healthScore >= 8 ? '#059669' : r.analysis.healthScore >= 5 ? '#d97706' : '#dc2626',
+        marginBottom: '24px'
+      }
+    }, "Score: ", r.analysis.healthScore, "/10"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '16px',
+        lineHeight: '1.6',
+        color: '#64748b',
+        marginBottom: '32px'
+      }
+    }, r.analysis.summary), r.analysis.findings?.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: '32px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '16px',
+        fontWeight: '800',
+        marginBottom: '16px'
+      }
+    }, "Key Findings"), r.analysis.findings.map((f, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        marginBottom: '16px',
+        paddingLeft: '16px',
+        borderLeft: `3px solid ${f.category === 'critical' ? '#ef4444' : f.category === 'warning' ? '#f59e0b' : '#10b981'}`
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: '700',
+        marginBottom: '4px'
+      }
+    }, f.category === 'critical' ? '🔴' : f.category === 'warning' ? '🟡' : '🟢', " ", f.title), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '14px',
+        color: '#64748b',
+        lineHeight: '1.5'
+      }
+    }, f.description)))), r.analysis.actions?.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: '32px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '16px',
+        fontWeight: '800',
+        marginBottom: '16px'
+      }
+    }, "Recommended Actions"), /*#__PURE__*/React.createElement("ol", {
+      style: {
+        paddingLeft: '24px',
+        color: '#64748b'
+      }
+    }, r.analysis.actions.slice(0, 3).map((a, i) => /*#__PURE__*/React.createElement("li", {
+      key: i,
+      style: {
+        marginBottom: '8px',
+        lineHeight: '1.5'
+      }
+    }, a)))), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      onClick: () => onAskMedBot(r.id),
+      style: {
+        marginTop: 0,
+        width: '100%'
+      }
+    }, "💬 Ask MedBot about this report")) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: 'center',
+        padding: '48px 24px',
+        color: '#94a3b8'
+      }
+    }, "Analysis in progress...")));
+  }
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: '1200px',
@@ -1701,7 +1831,7 @@ function MyReportsPage({
     }
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn",
-    onClick: () => onViewAnalysis(r),
+    onClick: () => onSelectReport(r),
     style: {
       flex: 1,
       padding: '10px',
@@ -2121,6 +2251,10 @@ function App() {
     setConsent(false);
     await runAnalysis(anonText);
   };
+  const completeUpload = () => {
+    setTab('reports');
+    reset();
+  };
   const reset = () => {
     setScreen('upload');
     setFile(null);
@@ -2303,16 +2437,63 @@ function App() {
   }, "🔄 Retry"), /*#__PURE__*/React.createElement("button", {
     className: "btn-back-link",
     onClick: () => setScreen('upload')
-  }, "← Go back"))), isLoggedIn && screen === 'results' && result && /*#__PURE__*/React.createElement(Results, {
-    result: result,
-    onReset: reset,
-    apiKey: key,
-    reportText: anonText,
-    reportId: reportId
-  }), isLoggedIn && user && tab === 'reports' && /*#__PURE__*/React.createElement(MyReportsPage, {
-    onViewAnalysis: r => {
-      setSelectedReportForAnalysis(r);
-      setTab('reports-detail');
+  }, "← Go back"))), isLoggedIn && user && tab === 'upload' && screen === 'results' && result && /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: '640px',
+      margin: '80px auto',
+      padding: '24px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: '#fff',
+      border: '1px solid rgba(20,184,166,.14)',
+      borderRadius: '24px',
+      padding: '64px 40px',
+      textAlign: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '48px',
+      marginBottom: '24px'
+    }
+  }, "✅"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '24px',
+      fontWeight: '900',
+      marginBottom: '8px'
+    }
+  }, "Analysis Complete!"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '14px',
+      color: '#94a3b8',
+      marginBottom: '32px'
+    }
+  }, "We've analyzed your report and it's now in your reports library."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: '12px',
+      flexDirection: 'column'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: completeUpload,
+    style: {
+      marginTop: 0
+    }
+  }, "📋 View Analysis →"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: reset,
+    style: {
+      marginTop: 0,
+      background: 'rgba(20,184,166,.1)',
+      color: '#14b8a6'
+    }
+  }, "+ Upload Another Report")))), isLoggedIn && user && tab === 'reports' && /*#__PURE__*/React.createElement(MyReportsPage, {
+    selectedForDetail: selectedReportForAnalysis,
+    onSelectReport: setSelectedReportForAnalysis,
+    onAskMedBot: reportId => {
+      setReportId(reportId);
+      setTab('chat');
     }
   }), isLoggedIn && user && tab === 'chat' && /*#__PURE__*/React.createElement(ChatSplitScreen, null), isLoggedIn && consent && /*#__PURE__*/React.createElement(ConsentModal, {
     preview: anonText,

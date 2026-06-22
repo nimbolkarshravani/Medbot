@@ -1377,7 +1377,7 @@ function AuthScreens({ onSignUp, onSignIn }) {
 }
 
 /* ── My Reports Page ────────────────────────────────────────────────────────── */
-function MyReportsPage({ onViewAnalysis }) {
+function MyReportsPage({ selectedForDetail, onSelectReport, onAskMedBot }) {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const { add: toast } = useToast();
@@ -1403,8 +1403,69 @@ function MyReportsPage({ onViewAnalysis }) {
     }
   };
 
-  const scoreColor = (score) => score >= 8 ? 'good' : score >= 5 ? 'warning' : 'critical';
-  const scoreLabel = (score) => score >= 8 ? 'Good' : score >= 5 ? 'Fair' : 'Poor';
+  if (selectedForDetail) {
+    const r = selectedForDetail;
+    return (
+      <div style={{ maxWidth: '900px', margin: '0 auto', padding: '24px' }}>
+        <button onClick={() => onSelectReport(null)} style={{ background: 'none', border: 'none', color: '#14b8a6', fontSize: '14px', fontWeight: '600', cursor: 'pointer', marginBottom: '24px' }}>
+          ← Back to Reports
+        </button>
+
+        <div style={{ background: '#fff', border: '1px solid rgba(20,184,166,.14)', borderRadius: '16px', padding: '40px' }}>
+          <div style={{ fontSize: '13px', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '8px' }}>{r.file_name}</div>
+          <div style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '24px' }}>{new Date(r.uploaded_at).toLocaleDateString()}</div>
+
+          {r.analysis ? (
+            <>
+              <div style={{ fontSize: '28px', fontWeight: '900', background: 'linear-gradient(135deg, #14b8a6, #06b6d4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '8px' }}>
+                {r.analysis.reportType}
+              </div>
+              <div style={{ display: 'inline-block', padding: '8px 16px', background: `rgba(${r.analysis.healthScore >= 8 ? '16,185,129' : r.analysis.healthScore >= 5 ? '245,158,11' : '239,68,68'},.1)`, borderRadius: '8px', fontSize: '14px', fontWeight: '700', color: r.analysis.healthScore >= 8 ? '#059669' : r.analysis.healthScore >= 5 ? '#d97706' : '#dc2626', marginBottom: '24px' }}>
+                Score: {r.analysis.healthScore}/10
+              </div>
+
+              <div style={{ fontSize: '16px', lineHeight: '1.6', color: '#64748b', marginBottom: '32px' }}>
+                {r.analysis.summary}
+              </div>
+
+              {r.analysis.findings?.length > 0 && (
+                <div style={{ marginBottom: '32px' }}>
+                  <div style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px' }}>Key Findings</div>
+                  {r.analysis.findings.map((f, i) => (
+                    <div key={i} style={{ marginBottom: '16px', paddingLeft: '16px', borderLeft: `3px solid ${f.category === 'critical' ? '#ef4444' : f.category === 'warning' ? '#f59e0b' : '#10b981'}` }}>
+                      <div style={{ fontWeight: '700', marginBottom: '4px' }}>
+                        {f.category === 'critical' ? '🔴' : f.category === 'warning' ? '🟡' : '🟢'} {f.title}
+                      </div>
+                      <div style={{ fontSize: '14px', color: '#64748b', lineHeight: '1.5' }}>{f.description}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {r.analysis.actions?.length > 0 && (
+                <div style={{ marginBottom: '32px' }}>
+                  <div style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px' }}>Recommended Actions</div>
+                  <ol style={{ paddingLeft: '24px', color: '#64748b' }}>
+                    {r.analysis.actions.slice(0, 3).map((a, i) => (
+                      <li key={i} style={{ marginBottom: '8px', lineHeight: '1.5' }}>{a}</li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
+              <button className="btn" onClick={() => onAskMedBot(r.id)} style={{ marginTop: 0, width: '100%' }}>
+                💬 Ask MedBot about this report
+              </button>
+            </>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '48px 24px', color: '#94a3b8' }}>
+              Analysis in progress...
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
@@ -1442,7 +1503,7 @@ function MyReportsPage({ onViewAnalysis }) {
                 </>
               )}
               <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                <button className="btn" onClick={() => onViewAnalysis(r)} style={{ flex: 1, padding: '10px', fontSize: '13px', marginTop: 0 }}>
+                <button className="btn" onClick={() => onSelectReport(r)} style={{ flex: 1, padding: '10px', fontSize: '13px', marginTop: 0 }}>
                   View
                 </button>
                 <button onClick={() => deleteReport(r.id, r.file_name)} style={{ padding: '10px 12px', background: 'rgba(239,68,68,.1)', border: '1px solid rgba(239,68,68,.2)', borderRadius: '8px', color: '#dc2626', cursor: 'pointer', fontSize: '16px', transition: 'all .18s' }}>
@@ -1715,6 +1776,11 @@ function App() {
     await runAnalysis(anonText);
   };
 
+  const completeUpload = () => {
+    setTab('reports');
+    reset();
+  };
+
   const reset = () => { setScreen('upload'); setFile(null); setResult(null); setReportId(null); setAnonText(''); setStep(0); };
 
   return (
@@ -1869,17 +1935,37 @@ function App() {
         </div>
       )}
 
-      {/* Results */}
-      {isLoggedIn && screen === 'results' && result && (
-        <Results result={result} onReset={reset} apiKey={key} reportText={anonText} reportId={reportId}/>
+      {/* Upload Success State */}
+      {isLoggedIn && user && tab === 'upload' && screen === 'results' && result && (
+        <div style={{ maxWidth: '640px', margin: '80px auto', padding: '24px' }}>
+          <div style={{ background: '#fff', border: '1px solid rgba(20,184,166,.14)', borderRadius: '24px', padding: '64px 40px', textAlign: 'center' }}>
+            <div style={{ fontSize: '48px', marginBottom: '24px' }}>✅</div>
+            <div style={{ fontSize: '24px', fontWeight: '900', marginBottom: '8px' }}>Analysis Complete!</div>
+            <div style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '32px' }}>
+              We've analyzed your report and it's now in your reports library.
+            </div>
+            <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
+              <button className="btn" onClick={completeUpload} style={{ marginTop: 0 }}>
+                📋 View Analysis →
+              </button>
+              <button className="btn" onClick={reset} style={{ marginTop: 0, background: 'rgba(20,184,166,.1)', color: '#14b8a6' }}>
+                + Upload Another Report
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Tab: My Reports */}
       {isLoggedIn && user && tab === 'reports' && (
-        <MyReportsPage onViewAnalysis={r => {
-          setSelectedReportForAnalysis(r);
-          setTab('reports-detail');
-        }} />
+        <MyReportsPage
+          selectedForDetail={selectedReportForAnalysis}
+          onSelectReport={setSelectedReportForAnalysis}
+          onAskMedBot={reportId => {
+            setReportId(reportId);
+            setTab('chat');
+          }}
+        />
       )}
 
       {/* Tab: Chat Split-Screen */}
