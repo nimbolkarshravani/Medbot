@@ -31,6 +31,7 @@
       background: linear-gradient(150deg, var(--bg-from) 0%, var(--bg-to) 100%);
       min-height: 100vh;
       color: var(--ink);
+      padding-top: 120px;
     }
 
     /* ── Scrollbar ── */
@@ -41,12 +42,18 @@
     /* ── Navbar ── */
     .nav {
       position: fixed; top: 0; left: 0; right: 0; z-index: 200;
-      height: 64px;
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 0 32px;
+      display: flex; flex-direction: column;
       background: rgba(255,255,255,.82);
       backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--border);
+    }
+    .nav > div:first-child {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 32px; height: 64px; border-bottom: 1px solid var(--border);
+    }
+    .nav > div:last-child {
+      display: flex; gap: 0; padding: 0 32px; border-bottom: 1px solid var(--border);
+      align-items: center;
     }
     .nav-logo {
       display: flex; align-items: center; gap: 10px;
