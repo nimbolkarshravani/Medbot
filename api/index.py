@@ -7,6 +7,7 @@ import os
 import re
 import time
 import json
+import base64
 from datetime import datetime, timezone
 from typing import List
 
@@ -309,7 +310,6 @@ def upload_report(body: ReportUpload, request: Request):
             "source_type": body.source_type,
             "status": "processing",
             "chunk_count": len(chunks),
-            "original_file": body.original_file,
         })
         .execute()
     )
@@ -331,7 +331,28 @@ def upload_report(body: ReportUpload, request: Request):
 
         db.table("chunks").insert(chunk_rows).execute()
 
-        db.table("reports").update({"status": "ready"}).eq("id", report_id).execute()
+        # Upload original file to Supabase Storage
+        original_file_url = ""
+        if body.original_file:
+            try:
+                file_ext = body.file_name.rsplit(".", 1)[-1].lower() if "." in body.file_name else "bin"
+                storage_path = f"{user['id']}/{report_id}.{file_ext}"
+                file_bytes = base64.b64decode(body.original_file)
+                content_type = "application/pdf" if file_ext == "pdf" else "text/plain"
+                db.storage.from_("reports").upload(
+                    storage_path,
+                    file_bytes,
+                    {"content-type": content_type},
+                )
+                signed = db.storage.from_("reports").create_signed_url(storage_path, 60 * 60 * 24 * 365)
+                original_file_url = signed.get("signedURL", "") if isinstance(signed, dict) else ""
+            except Exception as e:
+                pass
+
+        update_data = {"status": "ready"}
+        if original_file_url:
+            update_data["original_file_url"] = original_file_url
+        db.table("reports").update(update_data).eq("id", report_id).execute()
 
         return {
             "report_id": report_id,
@@ -527,6 +548,14 @@ If asked about changes over time, compare values across the retrieved report chu
 Always cite which report (by date) a value came from.
 Answer in plain English. Keep answers concise. Be reassuring but honest.
 Never diagnose or prescribe — always recommend seeing a real doctor for serious concerns.
+
+FORMATTING RULES (use proper Markdown):
+- Use **bold** for test names, values, and key metrics
+- Use bullet points (- ) for lists of findings or values
+- Use ### for section headings when organizing longer responses
+- Add blank lines between sections for readability
+- Keep paragraphs short (2-3 sentences max)
+- Use > blockquotes for important warnings or notes
 
 CURRENT REPORT ANALYSIS:{analysis_summary}
 

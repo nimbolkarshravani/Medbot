@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MedBot · AI Medical Report Analysis</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <style>
@@ -525,6 +526,18 @@
     }
     .chat-send:hover { transform: scale(1.08); box-shadow: 0 6px 16px rgba(20,184,166,.4); }
     .chat-send:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    /* ── Chat markdown rendering ── */
+    .chat-md p { margin: 0 0 8px; }
+    .chat-md p:last-child { margin-bottom: 0; }
+    .chat-md strong { font-weight: 700; color: #0f172a; }
+    .chat-md ul, .chat-md ol { margin: 4px 0 8px 16px; padding: 0; }
+    .chat-md li { margin-bottom: 4px; line-height: 1.5; }
+    .chat-md h3 { font-size: 14px; font-weight: 800; margin: 12px 0 6px; color: #0f172a; }
+    .chat-md h3:first-child { margin-top: 0; }
+    .chat-md blockquote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid #14b8a6; background: rgba(20,184,166,.06); border-radius: 0 6px 6px 0; font-size: 12.5px; color: #475569; }
+    .chat-md blockquote p { margin: 0; }
+    .chat-md code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 
     /* ── Error states ── */
     .err-screen { text-align: center; }
@@ -1878,12 +1891,9 @@ function ChatSplitScreen({
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [chatError, setChatError] = useState('');
-  const [pdfNumPages, setPdfNumPages] = useState(0);
-  const [pdfPageNum, setPdfPageNum] = useState(1);
+  const [pdfUrl, setPdfUrl] = useState('');
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
-  const pdfCanvasRef = useRef(null);
-  const pdfDocRef = useRef(null);
   const {
     list: toasts,
     add: toast
@@ -1904,54 +1914,20 @@ function ChatSplitScreen({
   useEffect(() => {
     if (!selectedReportId) return;
     setLoadingText(true);
-    setPdfPageNum(1);
+    setPdfUrl('');
     apiFetch(`/reports/${selectedReportId}`).then(data => {
       const rep = data.report;
       setReportObj(rep);
       setReportText(rep?.full_text || 'No report text available');
       setLoadingText(false);
-      if (rep?.original_file && rep?.file_name?.toLowerCase().endsWith('.pdf')) {
-        renderPDF(rep.original_file);
+      if (rep?.original_file_url && rep?.file_name?.toLowerCase().endsWith('.pdf')) {
+        setPdfUrl(rep.original_file_url);
       }
     }).catch(() => {
       setReportText('Failed to load report text');
       setLoadingText(false);
     });
   }, [selectedReportId]);
-  const renderPDF = async base64 => {
-    try {
-      const binaryString = atob(base64);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-      const pdf = await pdfjsLib.getDocument({
-        data: bytes
-      }).promise;
-      pdfDocRef.current = pdf;
-      setPdfNumPages(pdf.numPages);
-      setPdfPageNum(1);
-    } catch (e) {
-      console.error('PDF render error:', e);
-    }
-  };
-  useEffect(() => {
-    if (pdfDocRef.current && pdfCanvasRef.current) {
-      (async () => {
-        const page = await pdfDocRef.current.getPage(pdfPageNum);
-        const scale = 1.5;
-        const viewport = page.getViewport({
-          scale
-        });
-        const canvas = pdfCanvasRef.current;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext('2d');
-        await page.render({
-          canvasContext: ctx,
-          viewport
-        }).promise;
-      })();
-    }
-  }, [pdfPageNum, pdfNumPages]);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({
       behavior: 'smooth'
@@ -2050,8 +2026,7 @@ function ChatSplitScreen({
   }, r.file_name, " — ", new Date(r.uploaded_at).toLocaleDateString())))), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
-      overflowY: 'auto',
-      padding: '20px',
+      overflow: 'hidden',
       display: 'flex',
       flexDirection: 'column'
     }
@@ -2061,54 +2036,22 @@ function ChatSplitScreen({
       padding: '40px',
       color: '#94a3b8'
     }
-  }, "Loading report…") : pdfNumPages > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "Loading report…") : pdfUrl ? /*#__PURE__*/React.createElement("iframe", {
+    src: pdfUrl,
     style: {
       flex: 1,
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'flex-start',
-      background: '#f5f5f5',
-      borderRadius: '8px',
-      overflow: 'auto',
-      marginBottom: '12px'
-    }
-  }, /*#__PURE__*/React.createElement("canvas", {
-    ref: pdfCanvasRef,
+      width: '100%',
+      border: 'none',
+      borderRadius: '0 0 16px 16px'
+    },
+    title: "PDF Report"
+  }) : /*#__PURE__*/React.createElement("div", {
     style: {
-      maxWidth: '100%',
-      height: 'auto'
+      flex: 1,
+      overflowY: 'auto',
+      padding: '20px'
     }
-  })), pdfNumPages > 1 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '8px',
-      justifyContent: 'center',
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => pdfPageNum > 1 && setPdfPageNum(pdfPageNum - 1),
-    style: {
-      padding: '6px 12px',
-      background: '#f0f0f0',
-      border: '1px solid #e0e0e0',
-      borderRadius: '6px',
-      cursor: 'pointer'
-    }
-  }, "← Prev"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: '12px',
-      color: '#94a3b8'
-    }
-  }, "Page ", pdfPageNum, " of ", pdfNumPages), /*#__PURE__*/React.createElement("button", {
-    onClick: () => pdfPageNum < pdfNumPages && setPdfPageNum(pdfPageNum + 1),
-    style: {
-      padding: '6px 12px',
-      background: '#f0f0f0',
-      border: '1px solid #e0e0e0',
-      borderRadius: '6px',
-      cursor: 'pointer'
-    }
-  }, "Next →"))) : /*#__PURE__*/React.createElement("pre", {
+  }, /*#__PURE__*/React.createElement("pre", {
     style: {
       fontFamily: "'Courier New', monospace",
       fontSize: '12.5px',
@@ -2118,7 +2061,7 @@ function ChatSplitScreen({
       wordBreak: 'break-word',
       margin: 0
     }
-  }, reportText))), /*#__PURE__*/React.createElement("div", {
+  }, reportText)))), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: '0 0 calc(45% - 16px)',
       display: 'flex',
@@ -2180,20 +2123,34 @@ function ChatSplitScreen({
       display: 'flex',
       justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start'
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, m.role === 'user' ? /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: '80%',
       padding: '12px 14px',
       borderRadius: '14px',
       fontSize: '13px',
       lineHeight: '1.6',
-      background: m.role === 'user' ? 'linear-gradient(135deg, #14b8a6, #06b6d4)' : '#f1f5f9',
-      color: m.role === 'user' ? '#fff' : '#0f172a',
+      background: 'linear-gradient(135deg, #14b8a6, #06b6d4)',
+      color: '#fff',
       whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word',
-      overflowWrap: 'break-word'
+      wordBreak: 'break-word'
     }
-  }, m.content))), busy && /*#__PURE__*/React.createElement("div", {
+  }, m.content) : /*#__PURE__*/React.createElement("div", {
+    className: "chat-md",
+    style: {
+      maxWidth: '80%',
+      padding: '12px 14px',
+      borderRadius: '14px',
+      fontSize: '13px',
+      lineHeight: '1.6',
+      background: '#f1f5f9',
+      color: '#0f172a',
+      wordBreak: 'break-word'
+    },
+    dangerouslySetInnerHTML: {
+      __html: typeof marked !== 'undefined' ? marked.parse(m.content || '') : m.content
+    }
+  }))), busy && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: '5px',
@@ -2361,7 +2318,15 @@ function App() {
     if (reportId) {
       try {
         const res = await apiFetch(`/reports/${reportId}`);
-        setSelectedReportForAnalysis(res.report);
+        const report = res.report;
+        setSelectedReportForAnalysis(report);
+        setTab('reports');
+        setScreen('upload');
+        setFile(null);
+        setResult(null);
+        setAnonText('');
+        setStep(0);
+        return;
       } catch (e) {
         console.error('Failed to fetch report:', e);
       }
