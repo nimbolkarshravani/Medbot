@@ -814,11 +814,23 @@ async function readFile(file) {
   return ext === 'pdf' ? readPDF(file) : file.text();
 }
 
+async function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      resolve(result.split(',')[1] || '');
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 /* ── Backend RAG API calls ──────────────────────────────────────────────── */
-async function uploadReport(fileName, text) {
+async function uploadReport(fileName, text, fileBase64 = '') {
   return apiFetch('/reports/upload', {
     method: 'POST',
-    body: JSON.stringify({ file_name: fileName, text }),
+    body: JSON.stringify({ file_name: fileName, text, original_file: fileBase64 }),
   });
 }
 
@@ -1523,13 +1535,18 @@ function ChatSplitScreen({ initialReportId }) {
   const [reports, setReports] = useState([]);
   const [selectedReportId, setSelectedReportId] = useState(initialReportId || null);
   const [reportText, setReportText] = useState('');
+  const [reportObj, setReportObj] = useState(null);
   const [loadingText, setLoadingText] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [chatError, setChatError] = useState('');
+  const [pdfNumPages, setPdfNumPages] = useState(0);
+  const [pdfPageNum, setPdfPageNum] = useState(1);
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
+  const pdfCanvasRef = useRef(null);
+  const pdfDocRef = useRef(null);
   const { list: toasts, add: toast } = useToast();
 
   const SUGGESTIONS = [
@@ -1556,14 +1573,49 @@ function ChatSplitScreen({ initialReportId }) {
   useEffect(() => {
     if (!selectedReportId) return;
     setLoadingText(true);
+    setPdfPageNum(1);
     apiFetch(`/reports/${selectedReportId}`).then(data => {
-      setReportText(data.report?.full_text || 'No report text available');
+      const rep = data.report;
+      setReportObj(rep);
+      setReportText(rep?.full_text || 'No report text available');
       setLoadingText(false);
+      if (rep?.original_file && rep?.file_name?.toLowerCase().endsWith('.pdf')) {
+        renderPDF(rep.original_file);
+      }
     }).catch(() => {
       setReportText('Failed to load report text');
       setLoadingText(false);
     });
   }, [selectedReportId]);
+
+  const renderPDF = async (base64) => {
+    try {
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+      const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+      pdfDocRef.current = pdf;
+      setPdfNumPages(pdf.numPages);
+      setPdfPageNum(1);
+    } catch (e) {
+      console.error('PDF render error:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (pdfDocRef.current && pdfCanvasRef.current) {
+      (async () => {
+        const page = await pdfDocRef.current.getPage(pdfPageNum);
+        const scale = 1.5;
+        const viewport = page.getViewport({ scale });
+        const canvas = pdfCanvasRef.current;
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport }).promise;
+      })();
+    }
+  }, [pdfPageNum, pdfNumPages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1616,9 +1668,22 @@ function ChatSplitScreen({ initialReportId }) {
           </select>
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column' }}>
           {loadingText ? (
             <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>Loading report…</div>
+          ) : pdfNumPages > 0 ? (
+            <>
+              <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', background: '#f5f5f5', borderRadius: '8px', overflow: 'auto', marginBottom: '12px' }}>
+                <canvas ref={pdfCanvasRef} style={{ maxWidth: '100%', height: 'auto' }} />
+              </div>
+              {pdfNumPages > 1 && (
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
+                  <button onClick={() => pdfPageNum > 1 && setPdfPageNum(pdfPageNum - 1)} style={{ padding: '6px 12px', background: '#f0f0f0', border: '1px solid #e0e0e0', borderRadius: '6px', cursor: 'pointer' }}>← Prev</button>
+                  <span style={{ fontSize: '12px', color: '#94a3b8' }}>Page {pdfPageNum} of {pdfNumPages}</span>
+                  <button onClick={() => pdfPageNum < pdfNumPages && setPdfPageNum(pdfPageNum + 1)} style={{ padding: '6px 12px', background: '#f0f0f0', border: '1px solid #e0e0e0', borderRadius: '6px', cursor: 'pointer' }}>Next →</button>
+                </div>
+              )}
+            </>
           ) : (
             <pre style={{ fontFamily: "'Courier New', monospace", fontSize: '12.5px', lineHeight: '1.65', color: '#374151', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
               {reportText}
@@ -1654,6 +1719,9 @@ function ChatSplitScreen({ initialReportId }) {
                   lineHeight: '1.6',
                   background: m.role === 'user' ? 'linear-gradient(135deg, #14b8a6, #06b6d4)' : '#f1f5f9',
                   color: m.role === 'user' ? '#fff' : '#0f172a',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'break-word',
                 }}>
                   {m.content}
                 </div>
@@ -1755,7 +1823,8 @@ function App() {
 
       let analysisResult;
       if (authEnabled && user) {
-        const uploadRes = await uploadReport(file?.name || 'report.txt', textToAnalyze);
+        const fileBase64 = file ? await readFileAsBase64(file) : '';
+        const uploadRes = await uploadReport(file?.name || 'report.txt', textToAnalyze, fileBase64);
         const rid = uploadRes.report_id;
         setReportId(rid);
         const analyzeRes = await analyzeReport(rid);
@@ -1784,7 +1853,15 @@ function App() {
     await runAnalysis(anonText);
   };
 
-  const completeUpload = () => {
+  const completeUpload = async () => {
+    if (reportId) {
+      try {
+        const res = await apiFetch(`/reports/${reportId}`);
+        setSelectedReportForAnalysis(res.report);
+      } catch (e) {
+        console.error('Failed to fetch report:', e);
+      }
+    }
     setTab('reports');
     reset();
   };

@@ -286,6 +286,7 @@ def get_me(request: Request):
 class ReportUpload(BaseModel):
     file_name: str
     text: str
+    original_file: str = ""
     source_type: str = "upload"
 
 
@@ -308,6 +309,7 @@ def upload_report(body: ReportUpload, request: Request):
             "source_type": body.source_type,
             "status": "processing",
             "chunk_count": len(chunks),
+            "original_file": body.original_file,
         })
         .execute()
     )
