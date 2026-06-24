@@ -811,6 +811,9 @@ function useAuth() {
 
 /* ── PII patterns ─────────────────────────────────────────────────────── */
 const PII = [{
+  r: /(?:Patient\s*(?:Name)?|Name|Referring\s+(?:Physician|Doctor)|Ordering\s+(?:Physician|Doctor)|Attending|Reviewed\s+by|Reported\s+by|Collected\s+by|Performed\s+by)\s*[:\-]?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g,
+  t: '[NAME]'
+}, {
   r: /\b(Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g,
   t: '[NAME]'
 }, {
@@ -902,13 +905,13 @@ async function readFileAsBase64(file) {
 }
 
 /* ── Backend RAG API calls ──────────────────────────────────────────────── */
-async function uploadReport(fileName, text, fileBase64 = '') {
+async function uploadReport(fileName, text, originalFile = '') {
   return apiFetch('/reports/upload', {
     method: 'POST',
     body: JSON.stringify({
       file_name: fileName,
       text,
-      original_file: fileBase64
+      original_file: originalFile
     })
   });
 }
@@ -1914,14 +1917,27 @@ function ChatSplitScreen({
   useEffect(() => {
     if (!selectedReportId) return;
     setLoadingText(true);
-    setPdfUrl('');
+    if (pdfUrl) {
+      URL.revokeObjectURL(pdfUrl);
+      setPdfUrl('');
+    }
     apiFetch(`/reports/${selectedReportId}`).then(data => {
       const rep = data.report;
       setReportObj(rep);
       setReportText(rep?.full_text || 'No report text available');
       setLoadingText(false);
-      if (rep?.original_file_url && rep?.file_name?.toLowerCase().endsWith('.pdf')) {
-        setPdfUrl(rep.original_file_url);
+      if (rep?.original_file && rep?.file_name?.toLowerCase().endsWith('.pdf')) {
+        try {
+          const binary = atob(rep.original_file);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes], {
+            type: 'application/pdf'
+          });
+          setPdfUrl(URL.createObjectURL(blob));
+        } catch (e) {
+          console.error('PDF blob error:', e);
+        }
       }
     }).catch(() => {
       setReportText('Failed to load report text');
@@ -2287,7 +2303,8 @@ function App() {
       setStep(3);
       let analysisResult;
       if (authEnabled && user) {
-        const fileBase64 = file ? await readFileAsBase64(file) : '';
+        const isPdf = file?.name?.toLowerCase().endsWith('.pdf');
+        const fileBase64 = isPdf && file ? await readFileAsBase64(file) : '';
         const uploadRes = await uploadReport(file?.name || 'report.txt', textToAnalyze, fileBase64);
         const rid = uploadRes.report_id;
         setReportId(rid);

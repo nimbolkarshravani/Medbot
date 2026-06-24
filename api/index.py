@@ -7,7 +7,6 @@ import os
 import re
 import time
 import json
-import base64
 from datetime import datetime, timezone
 from typing import List
 
@@ -88,6 +87,7 @@ def _get_user(request: Request) -> dict:
 # ── PII Redaction ───────────────────────────────────────────────────────
 
 PII_PATTERNS = [
+    (r'(?:Patient\s*(?:Name)?|Name|Referring\s+(?:Physician|Doctor)|Ordering\s+(?:Physician|Doctor)|Attending|Reviewed\s+by|Reported\s+by|Collected\s+by|Performed\s+by)\s*[:\-]?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', '[NAME]'),
     (r'\b(Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', '[NAME]'),
     (r'\b[A-Z][a-z]+ [A-Z][a-z]+\b(?=\s*,?\s*(?:MD|DO|RN|PhD|NP|PA))', '[PROVIDER]'),
     (r'\b(?:SSN|Social Security(?:\s+Number)?)[\s:#]*\d{3}[-\s]?\d{2}[-\s]?\d{4}', '[SSN]'),
@@ -302,15 +302,19 @@ def upload_report(body: ReportUpload, request: Request):
     redacted = redact_pii(body.text)
     chunks = chunk_text(redacted)
 
+    insert_data = {
+        "patient_id": user["id"],
+        "file_name": body.file_name,
+        "source_type": body.source_type,
+        "status": "processing",
+        "chunk_count": len(chunks),
+    }
+    if body.original_file:
+        insert_data["original_file"] = body.original_file
+
     report_result = (
         db.table("reports")
-        .insert({
-            "patient_id": user["id"],
-            "file_name": body.file_name,
-            "source_type": body.source_type,
-            "status": "processing",
-            "chunk_count": len(chunks),
-        })
+        .insert(insert_data)
         .execute()
     )
     report = report_result.data[0]
@@ -330,29 +334,7 @@ def upload_report(body: ReportUpload, request: Request):
             })
 
         db.table("chunks").insert(chunk_rows).execute()
-
-        # Upload original file to Supabase Storage
-        original_file_url = ""
-        if body.original_file:
-            try:
-                file_ext = body.file_name.rsplit(".", 1)[-1].lower() if "." in body.file_name else "bin"
-                storage_path = f"{user['id']}/{report_id}.{file_ext}"
-                file_bytes = base64.b64decode(body.original_file)
-                content_type = "application/pdf" if file_ext == "pdf" else "text/plain"
-                db.storage.from_("reports").upload(
-                    storage_path,
-                    file_bytes,
-                    {"content-type": content_type},
-                )
-                signed = db.storage.from_("reports").create_signed_url(storage_path, 60 * 60 * 24 * 365)
-                original_file_url = signed.get("signedURL", "") if isinstance(signed, dict) else ""
-            except Exception as e:
-                pass
-
-        update_data = {"status": "ready"}
-        if original_file_url:
-            update_data["original_file_url"] = original_file_url
-        db.table("reports").update(update_data).eq("id", report_id).execute()
+        db.table("reports").update({"status": "ready"}).eq("id", report_id).execute()
 
         return {
             "report_id": report_id,
@@ -658,7 +640,7 @@ def list_reports(request: Request):
     db = get_admin_db()
     result = (
         db.table("reports")
-        .select("*")
+        .select("id, patient_id, file_name, source_type, status, chunk_count, analysis, uploaded_at")
         .eq("patient_id", user["id"])
         .order("uploaded_at", desc=True)
         .execute()
