@@ -811,48 +811,48 @@ function useAuth() {
 
 /* ── PII patterns ─────────────────────────────────────────────────────── */
 const PII = [
-// Patient/Provider names via label anchoring (REQUIRE colon/dash, REMOVED standalone "Name")
+// ULTRA-STRICT: Only match explicit patterns with labels and colons
+// Patient/Doctor/Physician names with EXPLICIT LABEL + COLON (no false positives on "Test Name")
 {
-  r: /(?:Patient\s+Name|Physician|Doctor|Referred\s+by|Attending|Reviewed\s+by|Ordered\s+by)\s*[:\-]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g,
+  r: /(?:Patient\s+Name|Physician|Doctor|Ordered\s+by|Reviewed\s+by|Attending)\s*:\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g,
   t: '[NAME]'
 },
-// Titles + names (Dr., Mr., etc.)
+// Titles: "Dr. NAME", "Mr. NAME" etc. (word boundary, explicit title, then TWO-PART NAME)
 {
-  r: /\b(?:Dr|Mr|Mrs|Ms|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g,
+  r: /\b(?:Dr|Mr|Mrs|Ms|Prof)\.\s+[A-Z][a-z]+\s+[A-Z][a-z]+\b/g,
   t: '[NAME]'
-}, {
-  r: /\b[A-Z][a-z]+ [A-Z][a-z]+\b(?=\s*,?\s*(?:MD|DO|RN|PhD|NP|PA))/g,
-  t: '[PROVIDER]'
-}, {
-  r: /\b(?:SSN|Social Security(?:\s+Number)?)[\s:#]*\d{3}[-\s]?\d{2}[-\s]?\d{4}/gi,
+},
+// Titles without period: "Dr NAME" (ONLY before credentials: MD, DO, RN, etc.)
+{
+  r: /\b(?:Dr|Mr|Mrs|Ms|Prof)\s+[A-Z][a-z]+\s+[A-Z][a-z]+(?=\s+(?:MD|DO|RN|PhD|NP|PA|,))/g,
+  t: '[NAME]'
+},
+// IDs and Contact — keep as-is, already specific
+{
+  r: /\bSSN[\s:]*\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/gi,
   t: '[SSN]'
 }, {
-  r: /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b(?!\d)/g,
-  t: '[SSN]'
-}, {
-  r: /\bMRN[\s:#]*[A-Z0-9\-]+/gi,
+  r: /\bMRN[\s:]*[A-Z0-9\-]{4,}/gi,
   t: '[MRN]'
 }, {
-  r: /\bPatient\s+(?:ID|Number)[\s:#]*[A-Z0-9\-]+/gi,
+  r: /\bPatient\s+ID[\s:]*[A-Z0-9\-]{4,}/gi,
   t: '[PATIENT-ID]'
-}, {
-  r: /\b(?:\+1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g,
-  t: '[PHONE]'
 }, {
   r: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g,
   t: '[EMAIL]'
 }, {
-  r: /\b\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl)\b(?:[^,\n]{0,40})?/gi,
+  r: /\b(?:\+1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g,
+  t: '[PHONE]'
+},
+// Addresses: strict, requires street type
+{
+  r: /\b\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl)\b/gi,
   t: '[ADDRESS]'
-}, {
-  r: /\b(?:DOB|Date of Birth|Birth Date|Born(?:\s+on)?)[\s:]*(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b/gi,
+},
+// DOB: strict patterns only, with explicit label
+{
+  r: /\b(?:DOB|Date\s+of\s+Birth)\s*:\s*(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b/gi,
   t: '[DOB]'
-}, {
-  r: /\b(?:0[1-9]|1[0-2])[\/\-](?:0[1-9]|[12]\d|3[01])[\/\-](?:19|20)\d{2}\b/g,
-  t: '[DOB]'
-}, {
-  r: /\b(?:Memorial|General|Community|Regional|University|St\.?\s+[A-Z][a-z]+|[A-Z][a-z]+ Medical|[A-Z][a-z]+ Health(?:care)?)\s+(?:Hospital|Clinic|Medical Center|Health System|Health Center|Centre)\b/gi,
-  t: '[FACILITY]'
 }];
 function redact(text) {
   let out = text;

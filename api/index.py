@@ -128,16 +128,19 @@ def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
     redactions = []
 
     # Define PII patterns with their replacement placeholders
-    # STRICT: require colons/dashes after labels, require specific context
+    # ULTRA-STRICT: Only match with explicit labels + colons or titles with credentials
     pii_patterns = [
-        # Names via label anchoring — REQUIRE colon/dash to avoid matching "Test Name", "Result Name", etc.
-        # Removed standalone "Name" and "Referring Physician" without label to avoid over-matching
-        (r'(?:Patient\s+Name|Ordered\s+by|Reviewed\s+by|Attended?\s+by)\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
+        # Names with explicit label + colon (not dash, colon only to avoid false positives)
+        (r'(?:Patient\s+Name|Physician|Doctor|Ordered\s+by|Reviewed\s+by|Attending)\s*:\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
          '[PATIENT_NAME]', 'label-anchored name'),
 
-        # Titles + names (must have MD/DO/etc. after)
-        (r'\b(?:Dr|Mr|Mrs|Ms|Prof)\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+?)(?=\s+(?:MD|DO|RN|PhD|NP|PA|,|\n|$))',
-         '[PATIENT_NAME]', 'titled name'),
+        # Titles with period: "Dr. Name Lastname"
+        (r'\b(?:Dr|Mr|Mrs|Ms|Prof)\.\s+([A-Z][a-z]+\s+[A-Z][a-z]+)\b',
+         '[PATIENT_NAME]', 'titled name with period'),
+
+        # Titles before credentials only: "Dr Name Lastname MD"
+        (r'\b(?:Dr|Mr|Mrs|Ms|Prof)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)(?=\s+(?:MD|DO|RN|PhD|NP|PA|,))',
+         '[PATIENT_NAME]', 'titled name before credentials'),
 
         # SSN patterns
         (r'\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b(?!\d)',
@@ -262,8 +265,9 @@ def test_redaction(sample_text: str) -> dict:
 # ── PII Redaction (Legacy - kept for backward compatibility) ───────────────────────────────────
 
 PII_PATTERNS = [
-    (r'(?:Patient\s+Name|Ordered\s+by|Reviewed\s+by|Attended?\s+by)\s*[:\-]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', '[NAME]'),
-    (r'\b(?:Dr|Mr|Mrs|Ms|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', '[NAME]'),
+    (r'(?:Patient\s+Name|Physician|Doctor|Ordered\s+by|Reviewed\s+by|Attending)\s*:\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', '[NAME]'),
+    (r'\b(?:Dr|Mr|Mrs|Ms|Prof)\.\s+[A-Z][a-z]+\s+[A-Z][a-z]+\b', '[NAME]'),
+    (r'\b(?:Dr|Mr|Mrs|Ms|Prof)\s+[A-Z][a-z]+\s+[A-Z][a-z]+(?=\s+(?:MD|DO|RN|PhD|NP|PA|,))', '[NAME]'),
     (r'\b[A-Z][a-z]+ [A-Z][a-z]+\b(?=\s*,?\s*(?:MD|DO|RN|PhD|NP|PA))', '[PROVIDER]'),
     (r'\b(?:SSN|Social Security(?:\s+Number)?)[\s:#]*\d{3}[-\s]?\d{2}[-\s]?\d{4}', '[SSN]'),
     (r'\b\d{3}[- ]?\d{2}[- ]?\d{4}\b(?!\d)', '[SSN]'),
