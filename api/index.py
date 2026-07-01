@@ -97,7 +97,7 @@ def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
         (redacted_text, list of redaction details for logging)
 
     Redaction strategy:
-    - Use regex to find matches
+    - Use regex to find matches with strict boundaries
     - Replace at exact span positions (not blind string replacement)
     - Typed placeholders: [PATIENT_NAME], [DOB], [MRN], [DATE], [EMAIL], [PHONE], [DOCTOR], [SSN]
 
@@ -106,31 +106,38 @@ def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
     redactions = []
 
     # Define PII patterns with their replacement placeholders
+    # STRICT: require colons/dashes after labels, require specific context
     pii_patterns = [
-        # Names via label anchoring (highest priority to avoid over-redaction)
-        (r'(?:Patient\s*(?:Name)?|Name|Referring\s+(?:Physician|Doctor)|Ordering\s+(?:Physician|Doctor)|Attending|Reviewed\s+by|Reported\s+by|Collected\s+by|Performed\s+by)\s*[:\-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
+        # Names via label anchoring — REQUIRE colon/dash to avoid matching "Test Name", "Result Name", etc.
+        (r'(?:Patient\s+Name|Physician|Doctor|Referred\s+by|Attending|Reviewed\s+by|Ordered\s+by)\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
          '[PATIENT_NAME]', 'label-anchored name'),
 
-        # Titles + names
-        (r'\b(Dr|Mr|Mrs|Ms|Prof)\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
+        # Titles + names (must have MD/DO/etc. after or be a clear name)
+        (r'\b(?:Dr|Mr|Mrs|Ms|Prof)\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+?)(?=\s+(?:MD|DO|RN|PhD|NP|PA|,|\n|$))',
          '[PATIENT_NAME]', 'titled name'),
 
         # SSN patterns
         (r'\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b(?!\d)',
          '[SSN]', 'SSN'),
 
-        # Dates (DOB, admission dates, etc.)
-        (r'\b(?:DOB|Date of Birth|Birth Date|Born(?:\s+on)?)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
+        # Dates with explicit labels
+        (r'(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born(?:\s+on)?)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
          '[DOB]', 'DOB label'),
-        (r'\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b',
+
+        # Bare dates (MM/DD/YYYY or M/D/YYYY) — only if isolated
+        (r'(?<![A-Z0-9])\d{1,2}[\/\-]\d{1,2}[\/\-](?:19|20)\d{2}(?![A-Z0-9])',
          '[DATE]', 'date format'),
 
-        # MRN and patient IDs
-        (r'\bMRN\s*[:\-]?\s*([A-Z0-9\-]+)',
+        # MRN with label (strict)
+        (r'\bMRN\s*[:\-]\s*([A-Z0-9\-]+)',
          '[MRN]', 'MRN'),
-        (r'\b(?:Patient\s+)?ID\s*[:\-]?\s*([A-Z0-9\-]+)',
+
+        # Patient ID with label (strict)
+        (r'\b(?:Patient\s+)?ID\s*[:\-]\s*([A-Z0-9\-]+)',
          '[PATIENT_ID]', 'patient ID'),
-        (r'\b(?:Accession|Lab|Specimen)\s+(?:Number|ID)\s*[:\-]?\s*([A-Z0-9\-]+)',
+
+        # Accession/Lab ID (require "Number" or "ID" word)
+        (r'\b(?:Accession|Specimen)\s+(?:Number|ID)\s*[:\-]?\s*([A-Z0-9\-]+)',
          '[LAB_ID]', 'accession/lab ID'),
 
         # Contact info
@@ -139,11 +146,11 @@ def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
         (r'\b(?:\+1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b',
          '[PHONE]', 'phone'),
 
-        # Indian IDs (extensible for future)
-        (r'\b\d{12}\b',  # Aadhaar-like (12 digits)
+        # Indian IDs (extensible for future) — require word boundary
+        (r'(?<![A-Z0-9])\d{12}(?![A-Z0-9])',
          '[NATIONAL_ID]', 'Aadhaar'),
 
-        # Addresses
+        # Addresses — street number + name + type
         (r'\b\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl)\b',
          '[ADDRESS]', 'street address'),
     ]
