@@ -531,6 +531,13 @@ Always cite which report (by date) a value came from.
 Answer in plain English. Keep answers concise. Be reassuring but honest.
 Never diagnose or prescribe — always recommend seeing a real doctor for serious concerns.
 
+CRITICAL - PRIVACY RULES:
+- NEVER use the patient's real name - all names in the data are marked [NAME]
+- NEVER refer to the patient by any specific name (no "Emma", "John", etc.)
+- ALWAYS use "you" or "your" instead: "your test results", "your cholesterol"
+- If you see any personal identifiers, treat them as placeholder [NAME] or [REDACTED]
+- Do NOT infer or guess patient identity from any context
+
 FORMATTING RULES (use proper Markdown):
 - Use **bold** for test names, values, and key metrics
 - Use bullet points (- ) for lists of findings or values
@@ -538,8 +545,6 @@ FORMATTING RULES (use proper Markdown):
 - Add blank lines between sections for readability
 - Keep paragraphs short (2-3 sentences max)
 - Use > blockquotes for important warnings or notes
-
-CURRENT REPORT ANALYSIS:{analysis_summary}
 
 RETRIEVED SECTIONS FROM PATIENT'S REPORTS:
 {context_text}"""
@@ -562,6 +567,12 @@ RETRIEVED SECTIONS FROM PATIENT'S REPORTS:
     )
 
     reply = response.text.strip()
+
+    # Sanitize response — remove any real names that might have leaked through
+    # Replace patterns like "Hi Emma," "Emma's results" with generic alternatives
+    reply = re.sub(r'\bEmma\b', 'you', reply, flags=re.IGNORECASE)
+    reply = re.sub(r'\b(Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', '[patient]', reply, flags=re.IGNORECASE)
+    reply = re.sub(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b(?=,?\s*(?:MD|DO|RN|PhD|NP|PA))', '[provider]', reply, flags=re.IGNORECASE)
 
     # Save user message and assistant response to DB
     try:
