@@ -90,6 +90,28 @@ def _get_user(request: Request) -> dict:
 # Extract → Redact → Validate → Generate PDF → Store
 # Each function is independently testable
 
+def extract_report_date(text: str) -> str:
+    """Extract the report date for metadata (before redaction).
+
+    Looks for patterns like:
+    - Date: February 15, 2026
+    - Collected: 02/15/2026
+    - Test Date: March 12, 2026
+
+    Returns the first found date string, or empty string if not found.
+    """
+    date_patterns = [
+        r'(?:Date|Report\s+Date|Test\s+Date|Collected|Drawn)\s*[:\-]\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
+        r'(?:Date|Report\s+Date|Test\s+Date|Collected|Drawn)\s*[:\-]\s*((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})',
+    ]
+
+    for pattern in date_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return ""
+
+
 def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
     """Redact PII using exact span offsets to avoid corrupting clinical values.
 
@@ -99,7 +121,7 @@ def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
     Redaction strategy:
     - Use regex to find matches with strict boundaries
     - Replace at exact span positions (not blind string replacement)
-    - Typed placeholders: [PATIENT_NAME], [DOB], [MRN], [DATE], [EMAIL], [PHONE], [DOCTOR], [SSN]
+    - Typed placeholders: [PATIENT_NAME], [DOB], [MRN], [DATE], [EMAIL], [PHONE], [SSN]
 
     Known limitation: Names in free-text prose without a label may be missed.
     """
@@ -120,13 +142,13 @@ def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
         (r'\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b(?!\d)',
          '[SSN]', 'SSN'),
 
-        # Dates with explicit labels
-        (r'(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born(?:\s+on)?)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
-         '[DOB]', 'DOB label'),
-
-        # Bare dates (MM/DD/YYYY or M/D/YYYY) — only if isolated
+        # ALL dates (DOB, test date, etc.) — redact to prevent timeline tracking
+        (r'(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born(?:\s+on)?|Date|Report\s+Date|Test\s+Date|Collected|Drawn)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
+         '[DATE]', 'date with label'),
+        (r'(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born(?:\s+on)?|Date|Report\s+Date|Test\s+Date)\s*[:\-]?\s*((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})',
+         '[DATE]', 'date text format'),
         (r'(?<![A-Z0-9])\d{1,2}[\/\-]\d{1,2}[\/\-](?:19|20)\d{2}(?![A-Z0-9])',
-         '[DATE]', 'date format'),
+         '[DATE]', 'bare date'),
 
         # MRN with label (strict)
         (r'\bMRN\s*[:\-]\s*([A-Z0-9\-]+)',
@@ -484,6 +506,9 @@ def upload_report(body: ReportUpload, request: Request):
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="Report text is empty")
 
+    # ── Extract report date (for comparison/metadata) ─────────────
+    report_date = extract_report_date(body.text)
+
     # ── Redact (defense in depth) ────────────────────────────────
     redacted_text, redactions_log = redact_pii_with_spans(body.text)
 
@@ -502,6 +527,8 @@ def upload_report(body: ReportUpload, request: Request):
         "status": "processing",
         "chunk_count": len(chunks),
     }
+    if report_date:
+        insert_data["report_date"] = report_date
 
     report_result = (
         db.table("reports")
