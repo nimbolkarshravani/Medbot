@@ -142,13 +142,10 @@ def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
         (r'\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b(?!\d)',
          '[SSN]', 'SSN'),
 
-        # ALL dates (DOB, test date, etc.) — redact to prevent timeline tracking
-        (r'(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born(?:\s+on)?|Date|Report\s+Date|Test\s+Date|Collected|Drawn)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
-         '[DATE]', 'date with label'),
-        (r'(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born(?:\s+on)?|Date|Report\s+Date|Test\s+Date)\s*[:\-]?\s*((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})',
-         '[DATE]', 'date text format'),
-        (r'(?<![A-Z0-9])\d{1,2}[\/\-]\d{1,2}[\/\-](?:19|20)\d{2}(?![A-Z0-9])',
-         '[DATE]', 'bare date'),
+        # NOTE: Dates are NOT redacted — they're clinically essential.
+        # Dates alone don't identify; you need dates + name/SSN together.
+        # Since names/SSNs are already redacted, dates are safe to keep.
+        # (Dates are extracted to reports.report_date metadata for easy comparison)
 
         # MRN with label (strict)
         (r'\bMRN\s*[:\-]\s*([A-Z0-9\-]+)',
