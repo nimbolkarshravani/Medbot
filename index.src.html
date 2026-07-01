@@ -1402,7 +1402,201 @@ function AuthScreens({ onSignUp, onSignIn }) {
   );
 }
 
-/* ── My Reports Page ────────────────────────────────────────────────────────── */
+/* ── Reports Page (unified upload + list) ──────────────────────────────────── */
+function ReportsPage({
+  selectedForDetail,
+  onSelectReport,
+  onAskMedBot,
+  onUploadClick,
+  file,
+  over,
+  ref,
+  key,
+  GEMINI_API_KEY,
+  focused,
+  setFocused,
+  canGo,
+  begin,
+  pickFile,
+  setFile
+}) {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const { add: toast } = useToast();
+
+  useEffect(() => {
+    apiFetch('/reports').then(data => {
+      setReports(data.reports || []);
+      setLoading(false);
+    }).catch(e => {
+      toast('Failed to load reports: ' + e.message, 'error');
+      setLoading(false);
+    });
+  }, [toast]);
+
+  const deleteReport = async (reportId, fileName) => {
+    if (!confirm(`Delete "${fileName}"?`)) return;
+    try {
+      await apiFetch(`/reports/${reportId}`, { method: 'DELETE' });
+      setReports(p => p.filter(r => r.id !== reportId));
+      toast('Report deleted', 'success');
+    } catch (e) {
+      toast('Delete failed: ' + e.message, 'error');
+    }
+  };
+
+  if (selectedForDetail) {
+    const r = selectedForDetail;
+    return (
+      <div style={{ maxWidth: '900px', margin: '0 auto', padding: '24px' }}>
+        <button onClick={() => onSelectReport(null)} style={{ background: 'none', border: 'none', color: '#14b8a6', fontSize: '14px', fontWeight: '600', cursor: 'pointer', marginBottom: '24px' }}>
+          ← Back to Reports
+        </button>
+
+        <div style={{ background: '#fff', border: '1px solid rgba(20,184,166,.14)', borderRadius: '16px', padding: '40px' }}>
+          <div style={{ fontSize: '13px', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '8px' }}>{r.file_name}</div>
+          <div style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '24px' }}>{new Date(r.uploaded_at).toLocaleDateString()}</div>
+
+          {r.analysis ? (
+            <>
+              <div style={{ fontSize: '28px', fontWeight: '900', background: 'linear-gradient(135deg, #14b8a6, #06b6d4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '8px' }}>
+                {r.analysis.reportType}
+              </div>
+              <div style={{ display: 'inline-block', padding: '8px 16px', background: `rgba(${r.analysis.healthScore >= 8 ? '16,185,129' : r.analysis.healthScore >= 5 ? '245,158,11' : '239,68,68'},.1)`, borderRadius: '8px', fontSize: '14px', fontWeight: '700', color: r.analysis.healthScore >= 8 ? '#059669' : r.analysis.healthScore >= 5 ? '#d97706' : '#dc2626', marginBottom: '24px' }}>
+                Score: {r.analysis.healthScore}/10
+              </div>
+
+              <div style={{ fontSize: '16px', lineHeight: '1.6', color: '#64748b', marginBottom: '32px' }}>
+                {r.analysis.summary}
+              </div>
+
+              {r.analysis.findings?.length > 0 && (
+                <div style={{ marginBottom: '32px' }}>
+                  <div style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px' }}>Key Findings</div>
+                  {r.analysis.findings.map((f, i) => (
+                    <div key={i} style={{ marginBottom: '16px', paddingLeft: '16px', borderLeft: `3px solid ${f.category === 'critical' ? '#ef4444' : f.category === 'warning' ? '#f59e0b' : '#10b981'}` }}>
+                      <div style={{ fontWeight: '700', marginBottom: '4px' }}>
+                        {f.category === 'critical' ? '🔴' : f.category === 'warning' ? '🟡' : '🟢'} {f.title}
+                      </div>
+                      <div style={{ fontSize: '14px', color: '#64748b', lineHeight: '1.5' }}>{f.description}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {r.analysis.actions?.length > 0 && (
+                <div style={{ marginBottom: '32px' }}>
+                  <div style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px' }}>Recommended Actions</div>
+                  <ol style={{ paddingLeft: '24px', color: '#64748b' }}>
+                    {r.analysis.actions.slice(0, 3).map((a, i) => (
+                      <li key={i} style={{ marginBottom: '8px', lineHeight: '1.5' }}>{a}</li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
+              <button className="btn" onClick={() => onAskMedBot(r.id)} style={{ marginTop: 0, width: '100%' }}>
+                💬 Ask MedBot about this report
+              </button>
+            </>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '48px 24px', color: '#94a3b8' }}>
+              Analysis in progress...
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
+      <h1 style={{ fontSize: '28px', fontWeight: '900', marginBottom: '32px' }}>📋 Medical Reports</h1>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '48px' }}>
+          <div className="spinner" style={{ margin: '0 auto 16px' }} />
+          <p style={{ color: '#94a3b8' }}>Loading your reports…</p>
+        </div>
+      ) : (
+        <>
+          {/* Upload card — show when no reports (empty state) or always visible */}
+          {reports.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '48px 24px', background: 'rgba(20,184,166,.05)', borderRadius: '16px', marginBottom: '32px' }}>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>📋</div>
+              <p style={{ fontSize: '18px', fontWeight: '700', marginBottom: '8px', color: '#1e293b' }}>No medical reports yet</p>
+              <p style={{ fontSize: '16px', color: '#64748b', marginBottom: '24px' }}>Upload your first report to get started with MedBot analysis.</p>
+              <button className="btn" onClick={onUploadClick} style={{ marginTop: 0 }}>
+                + Upload Medical Report
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Quick upload section */}
+              <div style={{ marginBottom: '32px', padding: '16px', background: 'rgba(20,184,166,.05)', borderRadius: '12px', border: '1px dashed rgba(20,184,166,.2)', textAlign: 'center' }}>
+                <button className="btn" onClick={onUploadClick} style={{ marginTop: 0 }}>
+                  + Upload Another Report
+                </button>
+              </div>
+
+              {/* Reports list */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
+                {reports.map(r => (
+                  <div key={r.id} style={{ background: '#fff', border: '1px solid rgba(20,184,166,.14)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontSize: '13px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: '600' }}>
+                      {new Date(r.uploaded_at).toLocaleDateString()}
+                    </div>
+                    <div style={{ fontSize: '15px', fontWeight: '700', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {r.file_name}
+                    </div>
+
+                    {/* Status badge */}
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8' }}>
+                      {r.status === 'pending' && '⏳ Pending analysis'}
+                      {r.status === 'ready' && '✅ Ready to analyze'}
+                      {r.status === 'analyzing' && '🔄 Analyzing...'}
+                      {r.status === 'analyzed' && '✓ Analysis complete'}
+                    </div>
+
+                    {r.analysis && (
+                      <>
+                        <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                          {r.analysis.reportType}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <div style={{ padding: '6px 12px', background: `rgba(${r.analysis.healthScore >= 8 ? '16,185,129' : r.analysis.healthScore >= 5 ? '245,158,11' : '239,68,68'},.15)`, borderRadius: '6px', fontSize: '12px', fontWeight: '700', color: r.analysis.healthScore >= 8 ? '#059669' : r.analysis.healthScore >= 5 ? '#d97706' : '#dc2626' }}>
+                            Score: {r.analysis.healthScore}/10
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                      {r.status === 'analyzed' ? (
+                        <button className="btn" onClick={() => onSelectReport(r)} style={{ flex: 1, padding: '10px', fontSize: '13px', marginTop: 0 }}>
+                          👁 View Analysis
+                        </button>
+                      ) : (
+                        <button className="btn" onClick={() => onSelectReport(r)} style={{ flex: 1, padding: '10px', fontSize: '13px', marginTop: 0 }}>
+                          📊 View Report
+                        </button>
+                      )}
+                      <button onClick={() => deleteReport(r.id, r.file_name)} style={{ padding: '10px 12px', background: 'rgba(239,68,68,.1)', border: '1px solid rgba(239,68,68,.2)', borderRadius: '8px', color: '#dc2626', cursor: 'pointer', fontSize: '16px', transition: 'all .18s' }}>
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ── My Reports Page (DEPRECATED - kept for reference) ────────────────────── */
 function MyReportsPage({ selectedForDetail, onSelectReport, onAskMedBot }) {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1758,8 +1952,9 @@ function App() {
   const { list: toasts, add: toast } = useToast();
 
   const isLoggedIn = !authEnabled || !!user;
-  const [tab, setTab] = useState('upload'); // upload | reports | chat
+  const [tab, setTab] = useState('reports'); // reports | chat
   const [selectedReportForAnalysis, setSelectedReportForAnalysis] = useState(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
 
   useEffect(() => {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -1802,9 +1997,13 @@ function App() {
 
       let analysisResult;
       if (authEnabled && user) {
-        const uploadRes = await uploadReport(file?.name || 'report.txt', textToAnalyze);
-        const rid = uploadRes.report_id;
-        setReportId(rid);
+        let rid = reportId;
+        // Only upload if we don't have a report_id yet (first attempt)
+        if (!rid) {
+          const uploadRes = await uploadReport(file?.name || 'report.txt', textToAnalyze);
+          rid = uploadRes.report_id;
+          setReportId(rid);
+        }
         const analyzeRes = await analyzeReport(rid);
         analysisResult = analyzeRes.analysis;
       } else {
@@ -1824,7 +2023,7 @@ function App() {
         setScreen('upload');
       }
     }
-  }, [key, authEnabled, user, file]);
+  }, [key, authEnabled, user, file, reportId]);
 
   const confirmConsent = async () => {
     setConsent(false);
@@ -1838,7 +2037,8 @@ function App() {
         const report = res.report;
         setSelectedReportForAnalysis(report);
         setTab('reports');
-        setScreen('upload');
+        setScreen(null);
+        setReportId(null);
         setFile(null);
         setResult(null);
         setAnonText('');
@@ -1852,7 +2052,7 @@ function App() {
     reset();
   };
 
-  const reset = () => { setScreen('upload'); setFile(null); setResult(null); setReportId(null); setAnonText(''); setStep(0); };
+  const reset = () => { setScreen(null); setFile(null); setResult(null); setReportId(null); setAnonText(''); setStep(0); setShowUploadModal(true); };
 
   return (
     <>
@@ -1878,7 +2078,7 @@ function App() {
 
         {isLoggedIn && user && (
           <div style={{ display: 'flex', gap: '0', padding: '0 32px', borderBottom: '1px solid rgba(20,184,166,.14)', alignItems: 'center' }}>
-            {['upload', 'reports', 'chat'].map(t => (
+            {['reports', 'chat'].map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
                 padding: '12px 20px',
                 background: 'none',
@@ -1890,7 +2090,7 @@ function App() {
                 cursor: 'pointer',
                 transition: 'all .2s',
               }}>
-                {t === 'upload' ? '+ Upload' : t === 'reports' ? 'My Reports' : '💬 Chat'}
+                {t === 'reports' ? '📋 Reports' : '💬 Chat'}
               </button>
             ))}
           </div>
@@ -1910,80 +2110,6 @@ function App() {
       {/* Login screen — shown when auth is enabled but user is not logged in */}
       {authEnabled && !authLoading && !user && (
         <AuthScreens onSignUp={signUp} onSignIn={signIn}/>
-      )}
-
-      {/* Tab: Upload — shown when user clicks Upload tab */}
-      {isLoggedIn && !authLoading && user && tab === 'upload' && screen === 'upload' && (
-        <div className="hero">
-          <div className="hero-badge">✦ AI-Powered Medical Analysis</div>
-          <h1 className="hero-h1">Understand Your<br/><span className="grad">Medical Reports</span></h1>
-          <p className="hero-sub">
-            Upload any medical report and receive plain-English insights from MedBot,
-            your AI medical analyst — with automatic privacy protection built in.
-          </p>
-
-          <div className="card upload-card">
-            {/* API key — hidden when pre-filled or when logged in (backend has key) */}
-            {!GEMINI_API_KEY && !(authEnabled && user) && (
-              <div className="field">
-                <label className={`field-label ${key || focused ? 'up' : ''}`}>
-                  Google Gemini API Key
-                </label>
-                <input className="field-input" type="password" value={key}
-                  onChange={e => setKey(e.target.value)}
-                  onFocus={() => setFocused(true)}
-                  onBlur={() => setFocused(false)}
-                  placeholder={focused ? 'AIza…' : ''}
-                />
-              </div>
-            )}
-
-            {/* Dropzone */}
-            <div className={`dropzone ${over ? 'over' : ''}`}
-              onDragOver={e => { e.preventDefault(); setOver(true); }}
-              onDragLeave={() => setOver(false)}
-              onDrop={e => { e.preventDefault(); setOver(false); pickFile(e.dataTransfer.files[0]); }}
-              onClick={() => ref.current?.click()}
-            >
-              <input ref={ref} type="file" accept=".pdf,.txt" style={{ display: 'none' }}
-                onChange={e => pickFile(e.target.files[0])}/>
-              <div className="dz-icon">{over ? '📂' : '📄'}</div>
-              <div className="dz-title">{over ? 'Release to upload' : 'Upload Medical Report'}</div>
-              <div className="dz-sub">Drag & drop or click to browse</div>
-              <div className="dz-badges">
-                <span className="dz-badge">PDF</span>
-                <span className="dz-badge">TXT</span>
-                <span className="dz-badge">Max 20 MB</span>
-              </div>
-            </div>
-
-            {/* File chip */}
-            {file && (
-              <div className="file-chip">
-                <div className="file-chip-icon">{file.name.endsWith('.pdf') ? '📕' : '📝'}</div>
-                <div className="file-chip-info">
-                  <div className="file-chip-name">{file.name}</div>
-                  <div className="file-chip-size">{(file.size / 1024).toFixed(1)} KB</div>
-                </div>
-                <button className="file-chip-rm"
-                  onClick={e => { e.stopPropagation(); setFile(null); }}>✕</button>
-              </div>
-            )}
-
-            <button className="btn" onClick={begin} disabled={!canGo}>
-              {canGo ? 'Analyze with MedBot →'
-                : !file ? (authEnabled && user ? 'Upload a report to continue' : (!key && !GEMINI_API_KEY ? 'Enter your Gemini API key to continue' : 'Upload a report to continue'))
-                : 'Upload a report to continue'}
-            </button>
-            <div className="note">🔒 PII auto-removed before AI · No data stored · Educational use only</div>
-          </div>
-
-          <div className="features">
-            {['PII Auto-Redaction', 'Plain-English Results', 'Severity Scoring', 'Actionable Insights', 'Privacy-First'].map(f => (
-              <div key={f} className="feat"><div className="feat-dot"/>{f}</div>
-            ))}
-          </div>
-        </div>
       )}
 
       {/* Loading */}
@@ -2006,10 +2132,29 @@ function App() {
         </div>
       )}
 
-      {/* Upload Success State */}
-      {isLoggedIn && user && tab === 'upload' && screen === 'results' && result && (
-        <div style={{ maxWidth: '640px', margin: '80px auto', padding: '24px' }}>
-          <div style={{ background: '#fff', border: '1px solid rgba(20,184,166,.14)', borderRadius: '24px', padding: '64px 40px', textAlign: 'center' }}>
+      {/* Analysis Success Dialog */}
+      {isLoggedIn && user && screen === 'results' && result && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          padding: '24px'
+        }}>
+          <div style={{
+            background: '#fff',
+            borderRadius: '24px',
+            padding: '64px 40px',
+            textAlign: 'center',
+            maxWidth: '500px',
+            width: '100%'
+          }}>
             <div style={{ fontSize: '48px', marginBottom: '24px' }}>✅</div>
             <div style={{ fontSize: '24px', fontWeight: '900', marginBottom: '8px' }}>Analysis Complete!</div>
             <div style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '32px' }}>
@@ -2027,16 +2172,116 @@ function App() {
         </div>
       )}
 
-      {/* Tab: My Reports */}
+      {/* Tab: Reports */}
       {isLoggedIn && user && tab === 'reports' && (
-        <MyReportsPage
+        <ReportsPage
           selectedForDetail={selectedReportForAnalysis}
           onSelectReport={setSelectedReportForAnalysis}
           onAskMedBot={reportId => {
             setReportId(reportId);
             setTab('chat');
           }}
+          onUploadClick={() => setShowUploadModal(true)}
+          file={file}
+          over={over}
+          ref={ref}
+          key={key}
+          GEMINI_API_KEY={GEMINI_API_KEY}
+          focused={focused}
+          setFocused={setFocused}
+          canGo={canGo}
+          begin={begin}
+          pickFile={pickFile}
+          setFile={setFile}
         />
+      )}
+
+      {/* Upload Modal Overlay */}
+      {isLoggedIn && user && showUploadModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '24px'
+        }}>
+          <div style={{
+            background: '#fff',
+            borderRadius: '16px',
+            padding: '40px',
+            maxWidth: '600px',
+            width: '100%',
+            maxHeight: '90vh',
+            overflowY: 'auto'
+          }}>
+            <button onClick={() => setShowUploadModal(false)} style={{
+              float: 'right',
+              background: 'none',
+              border: 'none',
+              fontSize: '24px',
+              cursor: 'pointer',
+              color: '#94a3b8'
+            }}>
+              ✕
+            </button>
+
+            <h2 style={{ fontSize: '24px', fontWeight: '900', marginBottom: '16px' }}>Upload Medical Report</h2>
+            <p style={{ color: '#64748b', marginBottom: '24px' }}>
+              Upload a PDF or text file. MedBot will analyze it privately with automatic PII redaction.
+            </p>
+
+            {/* Dropzone */}
+            <div className={`dropzone ${over ? 'over' : ''}`}
+              onDragOver={e => { e.preventDefault(); setOver(true); }}
+              onDragLeave={() => setOver(false)}
+              onDrop={e => { e.preventDefault(); setOver(false); pickFile(e.dataTransfer.files[0]); }}
+              onClick={() => ref.current?.click()}
+              style={{ marginBottom: '20px' }}
+            >
+              <input ref={ref} type="file" accept=".pdf,.txt" style={{ display: 'none' }}
+                onChange={e => pickFile(e.target.files[0])}/>
+              <div className="dz-icon">{over ? '📂' : '📄'}</div>
+              <div className="dz-title">{over ? 'Release to upload' : 'Upload Medical Report'}</div>
+              <div className="dz-sub">Drag & drop or click to browse</div>
+              <div className="dz-badges">
+                <span className="dz-badge">PDF</span>
+                <span className="dz-badge">TXT</span>
+                <span className="dz-badge">Max 20 MB</span>
+              </div>
+            </div>
+
+            {/* File chip */}
+            {file && (
+              <div className="file-chip" style={{ marginBottom: '20px' }}>
+                <div className="file-chip-icon">{file.name.endsWith('.pdf') ? '📕' : '📝'}</div>
+                <div className="file-chip-info">
+                  <div className="file-chip-name">{file.name}</div>
+                  <div className="file-chip-size">{(file.size / 1024).toFixed(1)} KB</div>
+                </div>
+                <button className="file-chip-rm"
+                  onClick={e => { e.stopPropagation(); setFile(null); }}>✕</button>
+              </div>
+            )}
+
+            <button className="btn" onClick={() => { begin(); setShowUploadModal(false); }} disabled={!canGo}
+              style={{ width: '100%', marginBottom: '12px' }}>
+              {canGo ? 'Start Analysis →' : (file ? 'Upload a report to continue' : 'Select a report to continue')}
+            </button>
+
+            <button className="btn" onClick={() => setShowUploadModal(false)}
+              style={{ width: '100%', background: 'rgba(20,184,166,.1)', color: '#14b8a6', marginTop: 0 }}>
+              ← Cancel
+            </button>
+
+            <div className="note" style={{ marginTop: '20px' }}>🔒 PII auto-removed before AI · No data stored · Educational use only</div>
+          </div>
+        </div>
       )}
 
       {/* Tab: Chat Split-Screen */}

@@ -521,7 +521,7 @@ def upload_report(body: ReportUpload, request: Request):
         "patient_id": user["id"],
         "file_name": body.file_name,
         "source_type": body.source_type,
-        "status": "processing",
+        "status": "pending",
         "chunk_count": len(chunks),
     }
     if report_date:
@@ -586,6 +586,8 @@ def analyze_report(report_id: str, request: Request):
     if report.get("analysis"):
         return {"analysis": report["analysis"], "cached": True}
 
+    db.table("reports").update({"status": "analyzing"}).eq("id", report_id).execute()
+
     chunks_result = (
         db.table("chunks")
         .select("chunk_text")
@@ -634,7 +636,7 @@ Medical Report:
         )
         raw = response.text
     except Exception as e:
-        db.table("reports").update({"status": "error"}).eq("id", report_id).execute()
+        db.table("reports").update({"status": "ready"}).eq("id", report_id).execute()
         raise HTTPException(status_code=500, detail=f"Gemini error: {type(e).__name__}: {str(e)}")
 
     try:
@@ -658,7 +660,7 @@ Medical Report:
     except (TypeError, ValueError):
         analysis["healthScore"] = 5
 
-    db.table("reports").update({"analysis": analysis}).eq("id", report_id).execute()
+    db.table("reports").update({"analysis": analysis, "status": "analyzed"}).eq("id", report_id).execute()
 
     return {"analysis": analysis, "cached": False}
 
