@@ -8,7 +8,8 @@ import re
 import time
 import json
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Tuple
+from io import BytesIO
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from supabase import Client, create_client
 import google.generativeai as genai
+
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    fitz = None
+
+try:
+    from fpdf import FPDF
+except ImportError:
+    FPDF = None
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
@@ -84,7 +95,202 @@ def _get_user(request: Request) -> dict:
     return {"id": user.id, "email": getattr(user, "email", "") or ""}
 
 
-# ── PII Redaction ───────────────────────────────────────────────────────
+# ── Ingestion Pipeline ──────────────────────────────────────────────────────
+# Extract → Redact → Validate → Generate PDF → Store
+# Each function is independently testable
+
+def extract_text_from_pdf(pdf_bytes: bytes) -> str:
+    """Extract text from digital PDF using PyMuPDF (fitz).
+    Assumes a real text layer exists — no OCR.
+    Raises exception if PyMuPDF unavailable.
+    """
+    if not fitz:
+        raise RuntimeError("PyMuPDF not available — cannot extract text from PDF")
+    try:
+        pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text = ""
+        for page_num in range(len(pdf)):
+            page = pdf[page_num]
+            text += page.get_text()
+            if page_num < len(pdf) - 1:
+                text += "\n--- PAGE BREAK ---\n"
+        pdf.close()
+        return text
+    except Exception as e:
+        raise ValueError(f"Failed to extract text from PDF: {str(e)}")
+
+
+def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
+    """Redact PII using exact span offsets to avoid corrupting clinical values.
+
+    Returns:
+        (redacted_text, list of redaction details for logging)
+
+    Redaction strategy:
+    - Use regex to find matches
+    - Replace at exact span positions (not blind string replacement)
+    - Typed placeholders: [PATIENT_NAME], [DOB], [MRN], [DATE], [EMAIL], [PHONE], [DOCTOR], [SSN]
+
+    Known limitation: Names in free-text prose without a label may be missed.
+    """
+    redactions = []
+
+    # Define PII patterns with their replacement placeholders
+    pii_patterns = [
+        # Names via label anchoring (highest priority to avoid over-redaction)
+        (r'(?:Patient\s*(?:Name)?|Name|Referring\s+(?:Physician|Doctor)|Ordering\s+(?:Physician|Doctor)|Attending|Reviewed\s+by|Reported\s+by|Collected\s+by|Performed\s+by)\s*[:\-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
+         '[PATIENT_NAME]', 'label-anchored name'),
+
+        # Titles + names
+        (r'\b(Dr|Mr|Mrs|Ms|Prof)\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
+         '[PATIENT_NAME]', 'titled name'),
+
+        # SSN patterns
+        (r'\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b(?!\d)',
+         '[SSN]', 'SSN'),
+
+        # Dates (DOB, admission dates, etc.)
+        (r'\b(?:DOB|Date of Birth|Birth Date|Born(?:\s+on)?)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
+         '[DOB]', 'DOB label'),
+        (r'\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b',
+         '[DATE]', 'date format'),
+
+        # MRN and patient IDs
+        (r'\bMRN\s*[:\-]?\s*([A-Z0-9\-]+)',
+         '[MRN]', 'MRN'),
+        (r'\b(?:Patient\s+)?ID\s*[:\-]?\s*([A-Z0-9\-]+)',
+         '[PATIENT_ID]', 'patient ID'),
+        (r'\b(?:Accession|Lab|Specimen)\s+(?:Number|ID)\s*[:\-]?\s*([A-Z0-9\-]+)',
+         '[LAB_ID]', 'accession/lab ID'),
+
+        # Contact info
+        (r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b',
+         '[EMAIL]', 'email'),
+        (r'\b(?:\+1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b',
+         '[PHONE]', 'phone'),
+
+        # Indian IDs (extensible for future)
+        (r'\b\d{12}\b',  # Aadhaar-like (12 digits)
+         '[NATIONAL_ID]', 'Aadhaar'),
+
+        # Addresses
+        (r'\b\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl)\b',
+         '[ADDRESS]', 'street address'),
+    ]
+
+    # Apply redactions using exact span offsets
+    # Build list of (start, end, replacement) tuples sorted by position (reverse to avoid offset drift)
+    replacements = []
+
+    for pattern, placeholder, description in pii_patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            start, end = match.span()
+            original = match.group(0)
+            replacements.append((start, end, placeholder, original, description))
+            redactions.append({
+                "type": description,
+                "placeholder": placeholder,
+                "original_length": len(original),
+                "position": start
+            })
+
+    # Sort by start position (descending) to apply replacements from end to start
+    # This prevents offset drift
+    replacements.sort(key=lambda x: x[0], reverse=True)
+
+    # Apply replacements
+    result = text
+    for start, end, placeholder, original, desc in replacements:
+        result = result[:start] + placeholder + result[end:]
+
+    return result, redactions
+
+
+def validate_redaction(original_text: str, redacted_text: str) -> List[dict]:
+    """Check for residual PII after redaction.
+
+    Returns list of warnings if suspicious patterns detected.
+    """
+    warnings = []
+
+    # Check for common PII labels that should have been redacted
+    suspicious_labels = [
+        (r'(?:Patient|Referring|Ordering)\s+(?:Name|ID|MRN)\s*[:]\s*[A-Z]', 'Patient/Referring/Ordering label with apparent name/ID'),
+        (r'\b(?:Dr|Mr|Mrs|Ms)\s+[A-Z][a-z]+\s+[A-Z][a-z]+', 'Title + name pattern'),
+        (r'\b\d{3}[- ]?\d{2}[- ]?\d{4}\b(?!\d)', 'SSN-like pattern'),
+        (r'\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b', 'Date-like pattern (check context)'),
+    ]
+
+    for pattern, description in suspicious_labels:
+        for match in re.finditer(pattern, redacted_text):
+            # Only warn if it's NOT a redaction placeholder
+            matched_text = match.group(0)
+            if not any(placeholder in matched_text for placeholder in ['[PATIENT', '[DATE', '[SSN', '[MRN', '[DOB']):
+                warnings.append({
+                    "pattern": description,
+                    "context": redacted_text[max(0, match.start()-20):min(len(redacted_text), match.end()+20)],
+                    "position": match.start()
+                })
+
+    return warnings
+
+
+def generate_redacted_pdf(redacted_text: str, filename: str = "report") -> bytes:
+    """Generate a PDF from redacted text using fpdf2.
+
+    Uses monospace font (Courier) at size 9 to preserve table alignment.
+
+    Returns PDF bytes.
+    """
+    if not FPDF:
+        raise RuntimeError("fpdf2 not available — cannot generate PDF")
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Courier", size=9)
+
+    # Add title
+    pdf.set_font("Courier", "B", 11)
+    pdf.cell(0, 10, filename, ln=True)
+    pdf.ln(5)
+
+    # Add content with proper spacing
+    pdf.set_font("Courier", size=9)
+    for line in redacted_text.split('\n'):
+        # FPDF auto-wraps at page width; use multi_cell for better control
+        pdf.multi_cell(0, 5, line)
+
+    return pdf.output()
+
+
+def test_redaction(sample_text: str) -> dict:
+    """Standalone test function — redact sample text and validate.
+
+    Returns:
+        {
+            "original": sample_text,
+            "redacted": redacted_text,
+            "redactions_count": count,
+            "warnings": validation_warnings,
+            "success": no warnings detected
+        }
+    """
+    redacted, redactions = redact_pii_with_spans(sample_text)
+    warnings = validate_redaction(sample_text, redacted)
+
+    return {
+        "original_length": len(sample_text),
+        "redacted_length": len(redacted),
+        "redactions_count": len(redactions),
+        "redactions": redactions,
+        "warnings": warnings,
+        "success": len(warnings) == 0,
+        "sample_original": sample_text[:200],
+        "sample_redacted": redacted[:200]
+    }
+
+
+# ── PII Redaction (Legacy - kept for backward compatibility) ───────────────────────────────────
 
 PII_PATTERNS = [
     (r'(?:Patient\s*(?:Name)?|Name|Referring\s+(?:Physician|Doctor)|Ordering\s+(?:Physician|Doctor)|Attending|Reviewed\s+by|Reported\s+by|Collected\s+by|Performed\s+by)\s*[:\-]?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', '[NAME]'),
@@ -282,6 +488,23 @@ def get_me(request: Request):
     return {"id": user["id"], "email": user["email"]}
 
 
+# ── Testing ─────────────────────────────────────────────────────────────
+
+@app.post("/api/test/redaction")
+def test_redaction_endpoint(body: dict):
+    """Test the redaction pipeline on sample text.
+
+    Request: {"text": "Patient Name: Emma Wilson, DOB: 01/15/1990, MRN: 12345678..."}
+    Response: detailed redaction report with warnings
+    """
+    sample_text = body.get("text", "")
+    if not sample_text:
+        raise HTTPException(status_code=400, detail="No text provided")
+
+    result = test_redaction(sample_text)
+    return result
+
+
 # ── Reports: Upload ─────────────────────────────────────────────────────
 
 class ReportUpload(BaseModel):
@@ -293,14 +516,56 @@ class ReportUpload(BaseModel):
 
 @app.post("/api/reports/upload")
 def upload_report(body: ReportUpload, request: Request):
-    user = _get_user(request)
-    if not body.text.strip():
-        raise HTTPException(status_code=400, detail="Report text is empty")
+    """Ingestion pipeline: Extract → Redact → Validate → Generate PDF → Store
 
+    Input: file_name, text (extracted text from client), original_file (base64 of original PDF)
+    Processing:
+    - Extract text from PDF if available (server-side extraction for consistency)
+    - Redact PII using span-based replacement (avoids damaging clinical values)
+    - Validate redaction
+    - Generate redacted PDF for display
+    - Store only redacted text and redacted PDF (discard original)
+
+    Output: report_id, chunk_count, status
+    """
+    user = _get_user(request)
     db = get_admin_db()
 
-    redacted = redact_pii(body.text)
-    chunks = chunk_text(redacted)
+    # ── Stage 1: Extract ─────────────────────────────────────────
+    extracted_text = body.text
+    is_pdf = body.file_name.lower().endswith('.pdf')
+
+    if is_pdf and body.original_file:
+        try:
+            pdf_bytes = bytes(int(body.original_file[i:i+2], 16) for i in range(0, len(body.original_file), 2))
+            extracted_text = extract_text_from_pdf(pdf_bytes)
+        except Exception as e:
+            # Fallback to client-provided text if extraction fails
+            print(f"Warning: PDF extraction failed, using client text: {e}")
+
+    if not extracted_text.strip():
+        raise HTTPException(status_code=400, detail="Report text is empty after extraction")
+
+    # ── Stage 2: Redact ─────────────────────────────────────────
+    redacted_text, redactions_log = redact_pii_with_spans(extracted_text)
+
+    # ── Stage 3: Validate ────────────────────────────────────────
+    validation_warnings = validate_redaction(extracted_text, redacted_text)
+    if validation_warnings:
+        print(f"Warning: Redaction validation found issues: {validation_warnings}")
+
+    # ── Stage 4: Generate PDF (if PDF) ───────────────────────────
+    redacted_pdf_base64 = ""
+    if is_pdf and FPDF:
+        try:
+            pdf_bytes = generate_redacted_pdf(redacted_text, filename=body.file_name)
+            # Convert to base64 for storage
+            redacted_pdf_base64 = pdf_bytes.hex()
+        except Exception as e:
+            print(f"Warning: PDF generation failed: {e}")
+
+    # ── Stage 5: Store ──────────────────────────────────────────
+    chunks = chunk_text(redacted_text)  # Chunk the REDACTED text
 
     insert_data = {
         "patient_id": user["id"],
@@ -309,8 +574,9 @@ def upload_report(body: ReportUpload, request: Request):
         "status": "processing",
         "chunk_count": len(chunks),
     }
-    if body.original_file:
-        insert_data["original_file"] = body.original_file
+    # Store ONLY redacted PDF, never the original
+    if redacted_pdf_base64:
+        insert_data["original_file"] = redacted_pdf_base64
 
     report_result = (
         db.table("reports")
@@ -341,6 +607,8 @@ def upload_report(body: ReportUpload, request: Request):
             "file_name": body.file_name,
             "chunk_count": len(chunks),
             "status": "ready",
+            "redactions_detected": len(redactions_log),
+            "validation_warnings": len(validation_warnings),
         }
     except Exception as e:
         db.table("reports").update({"status": "error"}).eq("id", report_id).execute()
