@@ -1422,6 +1422,7 @@ function ReportsPage({
 }) {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [analyzingIds, setAnalyzingIds] = useState(new Set());
   const { add: toast } = useToast();
 
   useEffect(() => {
@@ -1442,6 +1443,25 @@ function ReportsPage({
       toast('Report deleted', 'success');
     } catch (e) {
       toast('Delete failed: ' + e.message, 'error');
+    }
+  };
+
+  const triggerAnalysis = async (reportId) => {
+    setAnalyzingIds(p => new Set([...p, reportId]));
+    try {
+      await apiFetch(`/reports/${reportId}/analyze`, { method: 'POST' });
+      // Refresh the reports list
+      const res = await apiFetch('/reports');
+      setReports(res.reports || []);
+      toast('Analysis complete!', 'success');
+    } catch (e) {
+      toast(`Analysis failed: ${e.message}`, 'error');
+    } finally {
+      setAnalyzingIds(p => {
+        const newSet = new Set(p);
+        newSet.delete(reportId);
+        return newSet;
+      });
     }
   };
 
@@ -1572,7 +1592,16 @@ function ReportsPage({
                     )}
 
                     <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                      {r.status === 'analyzed' ? (
+                      {(r.status === 'pending' || r.status === 'ready') ? (
+                        <button
+                          className="btn"
+                          onClick={() => triggerAnalysis(r.id)}
+                          disabled={analyzingIds.has(r.id)}
+                          style={{ flex: 1, padding: '10px', fontSize: '13px', marginTop: 0, opacity: analyzingIds.has(r.id) ? 0.6 : 1 }}
+                        >
+                          {analyzingIds.has(r.id) ? '🔄 Analyzing...' : '🔬 Analyze'}
+                        </button>
+                      ) : r.status === 'analyzed' ? (
                         <button className="btn" onClick={() => onSelectReport(r)} style={{ flex: 1, padding: '10px', fontSize: '13px', marginTop: 0 }}>
                           👁 View Analysis
                         </button>
