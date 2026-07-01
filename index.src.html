@@ -774,8 +774,10 @@ function useAuth() {
 
 /* ── PII patterns ─────────────────────────────────────────────────────── */
 const PII = [
-  { r: /(?:Patient\s*(?:Name)?|Name|Referring\s+(?:Physician|Doctor)|Ordering\s+(?:Physician|Doctor)|Attending|Reviewed\s+by|Reported\s+by|Collected\s+by|Performed\s+by)\s*[:\-]?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g, t: '[NAME]' },
-  { r: /\b(Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g, t: '[NAME]' },
+  // Patient/Provider names via label anchoring (REQUIRE colon/dash, REMOVED standalone "Name")
+  { r: /(?:Patient\s+Name|Physician|Doctor|Referred\s+by|Attending|Reviewed\s+by|Ordered\s+by)\s*[:\-]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g, t: '[NAME]' },
+  // Titles + names (Dr., Mr., etc.)
+  { r: /\b(?:Dr|Mr|Mrs|Ms|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g, t: '[NAME]' },
   { r: /\b[A-Z][a-z]+ [A-Z][a-z]+\b(?=\s*,?\s*(?:MD|DO|RN|PhD|NP|PA))/g, t: '[PROVIDER]' },
   { r: /\b(?:SSN|Social Security(?:\s+Number)?)[\s:#]*\d{3}[-\s]?\d{2}[-\s]?\d{4}/gi, t: '[SSN]' },
   { r: /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b(?!\d)/g, t: '[SSN]' },
@@ -1868,22 +1870,24 @@ function ChatSplitScreen({ initialReportId }) {
           </select>
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: '#fafafa' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px', background: '#fafafa' }}>
           {loadingText ? (
             <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>Loading report…</div>
           ) : (
             <pre style={{
               fontFamily: "'Courier New', monospace",
-              fontSize: '11px',
-              lineHeight: '1.7',
+              fontSize: '13px',
+              lineHeight: '1.85',
               color: '#1e293b',
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
               margin: 0,
               background: '#fff',
-              padding: '16px',
-              borderRadius: '8px',
-              border: '1px solid rgba(20,184,166,.1)',
+              padding: '28px',
+              borderRadius: '12px',
+              border: '1px solid rgba(20,184,166,.12)',
+              letterSpacing: '0.2px',
+              boxShadow: '0 1px 3px rgba(0,0,0,.05)',
             }}>
               {reportText}
             </pre>
