@@ -18,15 +18,6 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 import google.generativeai as genai
 
-try:
-    import fitz  # PyMuPDF
-except ImportError:
-    fitz = None
-
-try:
-    from fpdf import FPDF
-except ImportError:
-    FPDF = None
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
@@ -98,27 +89,6 @@ def _get_user(request: Request) -> dict:
 # ── Ingestion Pipeline ──────────────────────────────────────────────────────
 # Extract → Redact → Validate → Generate PDF → Store
 # Each function is independently testable
-
-def extract_text_from_pdf(pdf_bytes: bytes) -> str:
-    """Extract text from digital PDF using PyMuPDF (fitz).
-    Assumes a real text layer exists — no OCR.
-    Raises exception if PyMuPDF unavailable.
-    """
-    if not fitz:
-        raise RuntimeError("PyMuPDF not available — cannot extract text from PDF")
-    try:
-        pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
-        text = ""
-        for page_num in range(len(pdf)):
-            page = pdf[page_num]
-            text += page.get_text()
-            if page_num < len(pdf) - 1:
-                text += "\n--- PAGE BREAK ---\n"
-        pdf.close()
-        return text
-    except Exception as e:
-        raise ValueError(f"Failed to extract text from PDF: {str(e)}")
-
 
 def redact_pii_with_spans(text: str) -> Tuple[str, List[dict]]:
     """Redact PII using exact span offsets to avoid corrupting clinical values.
@@ -233,34 +203,6 @@ def validate_redaction(original_text: str, redacted_text: str) -> List[dict]:
                 })
 
     return warnings
-
-
-def generate_redacted_pdf(redacted_text: str, filename: str = "report") -> bytes:
-    """Generate a PDF from redacted text using fpdf2.
-
-    Uses monospace font (Courier) at size 9 to preserve table alignment.
-
-    Returns PDF bytes.
-    """
-    if not FPDF:
-        raise RuntimeError("fpdf2 not available — cannot generate PDF")
-
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Courier", size=9)
-
-    # Add title
-    pdf.set_font("Courier", "B", 11)
-    pdf.cell(0, 10, filename, ln=True)
-    pdf.ln(5)
-
-    # Add content with proper spacing
-    pdf.set_font("Courier", size=9)
-    for line in redacted_text.split('\n'):
-        # FPDF auto-wraps at page width; use multi_cell for better control
-        pdf.multi_cell(0, 5, line)
-
-    return pdf.output()
 
 
 def test_redaction(sample_text: str) -> dict:
@@ -510,62 +452,41 @@ def test_redaction_endpoint(body: dict):
 class ReportUpload(BaseModel):
     file_name: str
     text: str
-    original_file: str = ""
     source_type: str = "upload"
 
 
 @app.post("/api/reports/upload")
 def upload_report(body: ReportUpload, request: Request):
-    """Ingestion pipeline: Extract → Redact → Validate → Generate PDF → Store
+    """Lightweight ingestion: Redact → Validate → Store
 
-    Input: file_name, text (extracted text from client), original_file (base64 of original PDF)
+    Input: file_name, text (client-extracted + client-redacted text)
     Processing:
-    - Extract text from PDF if available (server-side extraction for consistency)
-    - Redact PII using span-based replacement (avoids damaging clinical values)
-    - Validate redaction
-    - Generate redacted PDF for display
-    - Store only redacted text and redacted PDF (discard original)
+    - Server-side redaction (defense in depth, regex only)
+    - Validate redaction for residual PII
+    - Chunk and embed redacted text only
+    - Store ONLY redacted text
 
-    Output: report_id, chunk_count, status
+    NOTE: Original PDF is discarded on client after extraction.
+    Zero unredacted PII is ever transmitted or stored.
+
+    Output: report_id, chunk_count, status, redactions_detected
     """
     user = _get_user(request)
     db = get_admin_db()
 
-    # ── Stage 1: Extract ─────────────────────────────────────────
-    extracted_text = body.text
-    is_pdf = body.file_name.lower().endswith('.pdf')
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Report text is empty")
 
-    if is_pdf and body.original_file:
-        try:
-            pdf_bytes = bytes(int(body.original_file[i:i+2], 16) for i in range(0, len(body.original_file), 2))
-            extracted_text = extract_text_from_pdf(pdf_bytes)
-        except Exception as e:
-            # Fallback to client-provided text if extraction fails
-            print(f"Warning: PDF extraction failed, using client text: {e}")
+    # ── Redact (defense in depth) ────────────────────────────────
+    redacted_text, redactions_log = redact_pii_with_spans(body.text)
 
-    if not extracted_text.strip():
-        raise HTTPException(status_code=400, detail="Report text is empty after extraction")
-
-    # ── Stage 2: Redact ─────────────────────────────────────────
-    redacted_text, redactions_log = redact_pii_with_spans(extracted_text)
-
-    # ── Stage 3: Validate ────────────────────────────────────────
-    validation_warnings = validate_redaction(extracted_text, redacted_text)
+    # ── Validate ─────────────────────────────────────────────────
+    validation_warnings = validate_redaction(body.text, redacted_text)
     if validation_warnings:
         print(f"Warning: Redaction validation found issues: {validation_warnings}")
 
-    # ── Stage 4: Generate PDF (if PDF) ───────────────────────────
-    redacted_pdf_base64 = ""
-    if is_pdf and FPDF:
-        try:
-            pdf_bytes = generate_redacted_pdf(redacted_text, filename=body.file_name)
-            # Convert to base64 for storage
-            redacted_pdf_base64 = pdf_bytes.hex()
-        except Exception as e:
-            print(f"Warning: PDF generation failed: {e}")
-
-    # ── Stage 5: Store ──────────────────────────────────────────
-    chunks = chunk_text(redacted_text)  # Chunk the REDACTED text
+    # ── Store ────────────────────────────────────────────────────
+    chunks = chunk_text(redacted_text)  # Chunk ONLY redacted text
 
     insert_data = {
         "patient_id": user["id"],
@@ -574,9 +495,6 @@ def upload_report(body: ReportUpload, request: Request):
         "status": "processing",
         "chunk_count": len(chunks),
     }
-    # Store ONLY redacted PDF, never the original
-    if redacted_pdf_base64:
-        insert_data["original_file"] = redacted_pdf_base64
 
     report_result = (
         db.table("reports")
