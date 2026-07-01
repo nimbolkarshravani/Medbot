@@ -1596,7 +1596,384 @@ function AuthScreens({
   }, isSignUp ? 'Sign In' : 'Sign Up'))));
 }
 
-/* ── My Reports Page ────────────────────────────────────────────────────────── */
+/* ── Reports Page (unified upload + list) ──────────────────────────────────── */
+function ReportsPage({
+  selectedForDetail,
+  onSelectReport,
+  onAskMedBot,
+  onUploadClick,
+  file,
+  over,
+  ref,
+  key,
+  GEMINI_API_KEY,
+  focused,
+  setFocused,
+  canGo,
+  begin,
+  pickFile,
+  setFile
+}) {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [analyzingIds, setAnalyzingIds] = useState(new Set());
+  const {
+    add: toast
+  } = useToast();
+  useEffect(() => {
+    apiFetch('/reports').then(data => {
+      setReports(data.reports || []);
+      setLoading(false);
+    }).catch(e => {
+      toast('Failed to load reports: ' + e.message, 'error');
+      setLoading(false);
+    });
+  }, [toast]);
+  const deleteReport = async (reportId, fileName) => {
+    if (!confirm(`Delete "${fileName}"?`)) return;
+    try {
+      await apiFetch(`/reports/${reportId}`, {
+        method: 'DELETE'
+      });
+      setReports(p => p.filter(r => r.id !== reportId));
+      toast('Report deleted', 'success');
+    } catch (e) {
+      toast('Delete failed: ' + e.message, 'error');
+    }
+  };
+  const triggerAnalysis = async reportId => {
+    setAnalyzingIds(p => new Set([...p, reportId]));
+    try {
+      await apiFetch(`/reports/${reportId}/analyze`, {
+        method: 'POST'
+      });
+      // Refresh the reports list
+      const res = await apiFetch('/reports');
+      setReports(res.reports || []);
+      toast('Analysis complete!', 'success');
+    } catch (e) {
+      toast(`Analysis failed: ${e.message}`, 'error');
+    } finally {
+      setAnalyzingIds(p => {
+        const newSet = new Set(p);
+        newSet.delete(reportId);
+        return newSet;
+      });
+    }
+  };
+  if (selectedForDetail) {
+    const r = selectedForDetail;
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        maxWidth: '900px',
+        margin: '0 auto',
+        padding: '24px'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => onSelectReport(null),
+      style: {
+        background: 'none',
+        border: 'none',
+        color: '#14b8a6',
+        fontSize: '14px',
+        fontWeight: '600',
+        cursor: 'pointer',
+        marginBottom: '24px'
+      }
+    }, "← Back to Reports"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: '#fff',
+        border: '1px solid rgba(20,184,166,.14)',
+        borderRadius: '16px',
+        padding: '40px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '13px',
+        color: '#94a3b8',
+        textTransform: 'uppercase',
+        marginBottom: '8px'
+      }
+    }, r.file_name), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '13px',
+        color: '#94a3b8',
+        marginBottom: '24px'
+      }
+    }, new Date(r.uploaded_at).toLocaleDateString()), r.analysis ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '28px',
+        fontWeight: '900',
+        background: 'linear-gradient(135deg, #14b8a6, #06b6d4)',
+        WebkitBackgroundClip: 'text',
+        WebkitTextFillColor: 'transparent',
+        marginBottom: '8px'
+      }
+    }, r.analysis.reportType), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'inline-block',
+        padding: '8px 16px',
+        background: `rgba(${r.analysis.healthScore >= 8 ? '16,185,129' : r.analysis.healthScore >= 5 ? '245,158,11' : '239,68,68'},.1)`,
+        borderRadius: '8px',
+        fontSize: '14px',
+        fontWeight: '700',
+        color: r.analysis.healthScore >= 8 ? '#059669' : r.analysis.healthScore >= 5 ? '#d97706' : '#dc2626',
+        marginBottom: '24px'
+      }
+    }, "Score: ", r.analysis.healthScore, "/10"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '16px',
+        lineHeight: '1.6',
+        color: '#64748b',
+        marginBottom: '32px'
+      }
+    }, r.analysis.summary), r.analysis.findings?.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: '32px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '16px',
+        fontWeight: '800',
+        marginBottom: '16px'
+      }
+    }, "Key Findings"), r.analysis.findings.map((f, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        marginBottom: '16px',
+        paddingLeft: '16px',
+        borderLeft: `3px solid ${f.category === 'critical' ? '#ef4444' : f.category === 'warning' ? '#f59e0b' : '#10b981'}`
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: '700',
+        marginBottom: '4px'
+      }
+    }, f.category === 'critical' ? '🔴' : f.category === 'warning' ? '🟡' : '🟢', " ", f.title), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '14px',
+        color: '#64748b',
+        lineHeight: '1.5'
+      }
+    }, f.description)))), r.analysis.actions?.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: '32px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '16px',
+        fontWeight: '800',
+        marginBottom: '16px'
+      }
+    }, "Recommended Actions"), /*#__PURE__*/React.createElement("ol", {
+      style: {
+        paddingLeft: '24px',
+        color: '#64748b'
+      }
+    }, r.analysis.actions.slice(0, 3).map((a, i) => /*#__PURE__*/React.createElement("li", {
+      key: i,
+      style: {
+        marginBottom: '8px',
+        lineHeight: '1.5'
+      }
+    }, a)))), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      onClick: () => onAskMedBot(r.id),
+      style: {
+        marginTop: 0,
+        width: '100%'
+      }
+    }, "💬 Ask MedBot about this report")) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: 'center',
+        padding: '48px 24px',
+        color: '#94a3b8'
+      }
+    }, "Analysis in progress...")));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: '1200px',
+      margin: '0 auto',
+      padding: '24px'
+    }
+  }, /*#__PURE__*/React.createElement("h1", {
+    style: {
+      fontSize: '28px',
+      fontWeight: '900',
+      marginBottom: '32px'
+    }
+  }, "📋 Medical Reports"), loading ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: 'center',
+      padding: '48px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "spinner",
+    style: {
+      margin: '0 auto 16px'
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    style: {
+      color: '#94a3b8'
+    }
+  }, "Loading your reports…")) : /*#__PURE__*/React.createElement(React.Fragment, null, reports.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: 'center',
+      padding: '48px 24px',
+      background: 'rgba(20,184,166,.05)',
+      borderRadius: '16px',
+      marginBottom: '32px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '48px',
+      marginBottom: '16px'
+    }
+  }, "📋"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: '18px',
+      fontWeight: '700',
+      marginBottom: '8px',
+      color: '#1e293b'
+    }
+  }, "No medical reports yet"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: '16px',
+      color: '#64748b',
+      marginBottom: '24px'
+    }
+  }, "Upload your first report to get started with MedBot analysis."), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: onUploadClick,
+    style: {
+      marginTop: 0
+    }
+  }, "+ Upload Medical Report")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: '32px',
+      padding: '16px',
+      background: 'rgba(20,184,166,.05)',
+      borderRadius: '12px',
+      border: '1px dashed rgba(20,184,166,.2)',
+      textAlign: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: onUploadClick,
+    style: {
+      marginTop: 0
+    }
+  }, "+ Upload Another Report")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+      gap: '20px'
+    }
+  }, reports.map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.id,
+    style: {
+      background: '#fff',
+      border: '1px solid rgba(20,184,166,.14)',
+      borderRadius: '16px',
+      padding: '20px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '12px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '13px',
+      color: '#94a3b8',
+      textTransform: 'uppercase',
+      letterSpacing: '.05em',
+      fontWeight: '600'
+    }
+  }, new Date(r.uploaded_at).toLocaleDateString()), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '15px',
+      fontWeight: '700',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, r.file_name), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '12px',
+      fontWeight: '600',
+      color: '#94a3b8'
+    }
+  }, r.status === 'pending' && '⏳ Pending analysis', r.status === 'ready' && '✅ Ready to analyze', r.status === 'analyzing' && '🔄 Analyzing...', r.status === 'analyzed' && '✓ Analysis complete'), r.analysis && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '12px',
+      color: '#94a3b8'
+    }
+  }, r.analysis.reportType), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: '8px',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '6px 12px',
+      background: `rgba(${r.analysis.healthScore >= 8 ? '16,185,129' : r.analysis.healthScore >= 5 ? '245,158,11' : '239,68,68'},.15)`,
+      borderRadius: '6px',
+      fontSize: '12px',
+      fontWeight: '700',
+      color: r.analysis.healthScore >= 8 ? '#059669' : r.analysis.healthScore >= 5 ? '#d97706' : '#dc2626'
+    }
+  }, "Score: ", r.analysis.healthScore, "/10"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: '8px',
+      marginTop: '12px'
+    }
+  }, r.status === 'pending' || r.status === 'ready' ? /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => triggerAnalysis(r.id),
+    disabled: analyzingIds.has(r.id),
+    style: {
+      flex: 1,
+      padding: '10px',
+      fontSize: '13px',
+      marginTop: 0,
+      opacity: analyzingIds.has(r.id) ? 0.6 : 1
+    }
+  }, analyzingIds.has(r.id) ? '🔄 Analyzing...' : '🔬 Analyze') : r.status === 'analyzed' ? /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => onSelectReport(r),
+    style: {
+      flex: 1,
+      padding: '10px',
+      fontSize: '13px',
+      marginTop: 0
+    }
+  }, "👁 View Analysis") : /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => onSelectReport(r),
+    style: {
+      flex: 1,
+      padding: '10px',
+      fontSize: '13px',
+      marginTop: 0
+    }
+  }, "📊 View Report"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => deleteReport(r.id, r.file_name),
+    style: {
+      padding: '10px 12px',
+      background: 'rgba(239,68,68,.1)',
+      border: '1px solid rgba(239,68,68,.2)',
+      borderRadius: '8px',
+      color: '#dc2626',
+      cursor: 'pointer',
+      fontSize: '16px',
+      transition: 'all .18s'
+    }
+  }, "✕"))))))));
+}
+
+/* ── My Reports Page (DEPRECATED - kept for reference) ────────────────────── */
 function MyReportsPage({
   selectedForDetail,
   onSelectReport,
@@ -2228,8 +2605,9 @@ function App() {
     add: toast
   } = useToast();
   const isLoggedIn = !authEnabled || !!user;
-  const [tab, setTab] = useState('upload'); // upload | reports | chat
+  const [tab, setTab] = useState('reports'); // reports | chat
   const [selectedReportForAnalysis, setSelectedReportForAnalysis] = useState(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
   useEffect(() => {
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }, []);
@@ -2273,9 +2651,13 @@ function App() {
       setStep(3);
       let analysisResult;
       if (authEnabled && user) {
-        const uploadRes = await uploadReport(file?.name || 'report.txt', textToAnalyze);
-        const rid = uploadRes.report_id;
-        setReportId(rid);
+        let rid = reportId;
+        // Only upload if we don't have a report_id yet (first attempt)
+        if (!rid) {
+          const uploadRes = await uploadReport(file?.name || 'report.txt', textToAnalyze);
+          rid = uploadRes.report_id;
+          setReportId(rid);
+        }
         const analyzeRes = await analyzeReport(rid);
         analysisResult = analyzeRes.analysis;
       } else {
@@ -2294,7 +2676,7 @@ function App() {
         setScreen('upload');
       }
     }
-  }, [key, authEnabled, user, file]);
+  }, [key, authEnabled, user, file, reportId]);
   const confirmConsent = async () => {
     setConsent(false);
     await runAnalysis(anonText);
@@ -2306,7 +2688,8 @@ function App() {
         const report = res.report;
         setSelectedReportForAnalysis(report);
         setTab('reports');
-        setScreen('upload');
+        setScreen(null);
+        setReportId(null);
         setFile(null);
         setResult(null);
         setAnonText('');
@@ -2320,12 +2703,13 @@ function App() {
     reset();
   };
   const reset = () => {
-    setScreen('upload');
+    setScreen(null);
     setFile(null);
     setResult(null);
     setReportId(null);
     setAnonText('');
     setStep(0);
+    setShowUploadModal(true);
   };
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("nav", {
     className: "nav",
@@ -2367,7 +2751,7 @@ function App() {
       borderBottom: '1px solid rgba(20,184,166,.14)',
       alignItems: 'center'
     }
-  }, ['upload', 'reports', 'chat'].map(t => /*#__PURE__*/React.createElement("button", {
+  }, ['reports', 'chat'].map(t => /*#__PURE__*/React.createElement("button", {
     key: t,
     onClick: () => setTab(t),
     style: {
@@ -2381,7 +2765,7 @@ function App() {
       cursor: 'pointer',
       transition: 'all .2s'
     }
-  }, t === 'upload' ? '+ Upload' : t === 'reports' ? 'My Reports' : '💬 Chat')))), authEnabled && authLoading && /*#__PURE__*/React.createElement("div", {
+  }, t === 'reports' ? '📋 Reports' : '💬 Chat')))), authEnabled && authLoading && /*#__PURE__*/React.createElement("div", {
     className: "loading-wrap"
   }, /*#__PURE__*/React.createElement("div", {
     className: "loading-card",
@@ -2395,95 +2779,7 @@ function App() {
   }, "Checking authentication…"))), authEnabled && !authLoading && !user && /*#__PURE__*/React.createElement(AuthScreens, {
     onSignUp: signUp,
     onSignIn: signIn
-  }), isLoggedIn && !authLoading && user && tab === 'upload' && screen === 'upload' && /*#__PURE__*/React.createElement("div", {
-    className: "hero"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "hero-badge"
-  }, "✦ AI-Powered Medical Analysis"), /*#__PURE__*/React.createElement("h1", {
-    className: "hero-h1"
-  }, "Understand Your", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
-    className: "grad"
-  }, "Medical Reports")), /*#__PURE__*/React.createElement("p", {
-    className: "hero-sub"
-  }, "Upload any medical report and receive plain-English insights from MedBot, your AI medical analyst — with automatic privacy protection built in."), /*#__PURE__*/React.createElement("div", {
-    className: "card upload-card"
-  }, !GEMINI_API_KEY && !(authEnabled && user) && /*#__PURE__*/React.createElement("div", {
-    className: "field"
-  }, /*#__PURE__*/React.createElement("label", {
-    className: `field-label ${key || focused ? 'up' : ''}`
-  }, "Google Gemini API Key"), /*#__PURE__*/React.createElement("input", {
-    className: "field-input",
-    type: "password",
-    value: key,
-    onChange: e => setKey(e.target.value),
-    onFocus: () => setFocused(true),
-    onBlur: () => setFocused(false),
-    placeholder: focused ? 'AIza…' : ''
-  })), /*#__PURE__*/React.createElement("div", {
-    className: `dropzone ${over ? 'over' : ''}`,
-    onDragOver: e => {
-      e.preventDefault();
-      setOver(true);
-    },
-    onDragLeave: () => setOver(false),
-    onDrop: e => {
-      e.preventDefault();
-      setOver(false);
-      pickFile(e.dataTransfer.files[0]);
-    },
-    onClick: () => ref.current?.click()
-  }, /*#__PURE__*/React.createElement("input", {
-    ref: ref,
-    type: "file",
-    accept: ".pdf,.txt",
-    style: {
-      display: 'none'
-    },
-    onChange: e => pickFile(e.target.files[0])
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "dz-icon"
-  }, over ? '📂' : '📄'), /*#__PURE__*/React.createElement("div", {
-    className: "dz-title"
-  }, over ? 'Release to upload' : 'Upload Medical Report'), /*#__PURE__*/React.createElement("div", {
-    className: "dz-sub"
-  }, "Drag & drop or click to browse"), /*#__PURE__*/React.createElement("div", {
-    className: "dz-badges"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dz-badge"
-  }, "PDF"), /*#__PURE__*/React.createElement("span", {
-    className: "dz-badge"
-  }, "TXT"), /*#__PURE__*/React.createElement("span", {
-    className: "dz-badge"
-  }, "Max 20 MB"))), file && /*#__PURE__*/React.createElement("div", {
-    className: "file-chip"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "file-chip-icon"
-  }, file.name.endsWith('.pdf') ? '📕' : '📝'), /*#__PURE__*/React.createElement("div", {
-    className: "file-chip-info"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "file-chip-name"
-  }, file.name), /*#__PURE__*/React.createElement("div", {
-    className: "file-chip-size"
-  }, (file.size / 1024).toFixed(1), " KB")), /*#__PURE__*/React.createElement("button", {
-    className: "file-chip-rm",
-    onClick: e => {
-      e.stopPropagation();
-      setFile(null);
-    }
-  }, "✕")), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: begin,
-    disabled: !canGo
-  }, canGo ? 'Analyze with MedBot →' : !file ? authEnabled && user ? 'Upload a report to continue' : !key && !GEMINI_API_KEY ? 'Enter your Gemini API key to continue' : 'Upload a report to continue' : 'Upload a report to continue'), /*#__PURE__*/React.createElement("div", {
-    className: "note"
-  }, "🔒 PII auto-removed before AI · No data stored · Educational use only")), /*#__PURE__*/React.createElement("div", {
-    className: "features"
-  }, ['PII Auto-Redaction', 'Plain-English Results', 'Severity Scoring', 'Actionable Insights', 'Privacy-First'].map(f => /*#__PURE__*/React.createElement("div", {
-    key: f,
-    className: "feat"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "feat-dot"
-  }), f)))), isLoggedIn && screen === 'loading' && /*#__PURE__*/React.createElement(LoadingScreen, {
+  }), isLoggedIn && screen === 'loading' && /*#__PURE__*/React.createElement(LoadingScreen, {
     step: step
   }), isLoggedIn && screen === 'error' && /*#__PURE__*/React.createElement("div", {
     className: "loading-wrap"
@@ -2501,19 +2797,28 @@ function App() {
   }, "🔄 Retry"), /*#__PURE__*/React.createElement("button", {
     className: "btn-back-link",
     onClick: () => setScreen('upload')
-  }, "← Go back"))), isLoggedIn && user && tab === 'upload' && screen === 'results' && result && /*#__PURE__*/React.createElement("div", {
+  }, "← Go back"))), isLoggedIn && user && screen === 'results' && result && /*#__PURE__*/React.createElement("div", {
     style: {
-      maxWidth: '640px',
-      margin: '80px auto',
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(0,0,0,.5)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 2000,
       padding: '24px'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       background: '#fff',
-      border: '1px solid rgba(20,184,166,.14)',
       borderRadius: '24px',
       padding: '64px 40px',
-      textAlign: 'center'
+      textAlign: 'center',
+      maxWidth: '500px',
+      width: '100%'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2552,14 +2857,153 @@ function App() {
       background: 'rgba(20,184,166,.1)',
       color: '#14b8a6'
     }
-  }, "+ Upload Another Report")))), isLoggedIn && user && tab === 'reports' && /*#__PURE__*/React.createElement(MyReportsPage, {
+  }, "+ Upload Another Report")))), isLoggedIn && user && tab === 'reports' && /*#__PURE__*/React.createElement(ReportsPage, {
     selectedForDetail: selectedReportForAnalysis,
     onSelectReport: setSelectedReportForAnalysis,
     onAskMedBot: reportId => {
       setReportId(reportId);
       setTab('chat');
+    },
+    onUploadClick: () => setShowUploadModal(true),
+    file: file,
+    over: over,
+    ref: ref,
+    key: key,
+    GEMINI_API_KEY: GEMINI_API_KEY,
+    focused: focused,
+    setFocused: setFocused,
+    canGo: canGo,
+    begin: begin,
+    pickFile: pickFile,
+    setFile: setFile
+  }), isLoggedIn && user && showUploadModal && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(0,0,0,.5)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1000,
+      padding: '24px'
     }
-  }), isLoggedIn && user && tab === 'chat' && /*#__PURE__*/React.createElement(ChatSplitScreen, {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: '#fff',
+      borderRadius: '16px',
+      padding: '40px',
+      maxWidth: '600px',
+      width: '100%',
+      maxHeight: '90vh',
+      overflowY: 'auto'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowUploadModal(false),
+    style: {
+      float: 'right',
+      background: 'none',
+      border: 'none',
+      fontSize: '24px',
+      cursor: 'pointer',
+      color: '#94a3b8'
+    }
+  }, "✕"), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: '24px',
+      fontWeight: '900',
+      marginBottom: '16px'
+    }
+  }, "Upload Medical Report"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      color: '#64748b',
+      marginBottom: '24px'
+    }
+  }, "Upload a PDF or text file. MedBot will analyze it privately with automatic PII redaction."), /*#__PURE__*/React.createElement("div", {
+    className: `dropzone ${over ? 'over' : ''}`,
+    onDragOver: e => {
+      e.preventDefault();
+      setOver(true);
+    },
+    onDragLeave: () => setOver(false),
+    onDrop: e => {
+      e.preventDefault();
+      setOver(false);
+      pickFile(e.dataTransfer.files[0]);
+    },
+    onClick: () => ref.current?.click(),
+    style: {
+      marginBottom: '20px'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    ref: ref,
+    type: "file",
+    accept: ".pdf,.txt",
+    style: {
+      display: 'none'
+    },
+    onChange: e => pickFile(e.target.files[0])
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "dz-icon"
+  }, over ? '📂' : '📄'), /*#__PURE__*/React.createElement("div", {
+    className: "dz-title"
+  }, over ? 'Release to upload' : 'Upload Medical Report'), /*#__PURE__*/React.createElement("div", {
+    className: "dz-sub"
+  }, "Drag & drop or click to browse"), /*#__PURE__*/React.createElement("div", {
+    className: "dz-badges"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dz-badge"
+  }, "PDF"), /*#__PURE__*/React.createElement("span", {
+    className: "dz-badge"
+  }, "TXT"), /*#__PURE__*/React.createElement("span", {
+    className: "dz-badge"
+  }, "Max 20 MB"))), file && /*#__PURE__*/React.createElement("div", {
+    className: "file-chip",
+    style: {
+      marginBottom: '20px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "file-chip-icon"
+  }, file.name.endsWith('.pdf') ? '📕' : '📝'), /*#__PURE__*/React.createElement("div", {
+    className: "file-chip-info"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "file-chip-name"
+  }, file.name), /*#__PURE__*/React.createElement("div", {
+    className: "file-chip-size"
+  }, (file.size / 1024).toFixed(1), " KB")), /*#__PURE__*/React.createElement("button", {
+    className: "file-chip-rm",
+    onClick: e => {
+      e.stopPropagation();
+      setFile(null);
+    }
+  }, "✕")), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => {
+      begin();
+      setShowUploadModal(false);
+    },
+    disabled: !canGo,
+    style: {
+      width: '100%',
+      marginBottom: '12px'
+    }
+  }, canGo ? 'Start Analysis →' : file ? 'Upload a report to continue' : 'Select a report to continue'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setShowUploadModal(false),
+    style: {
+      width: '100%',
+      background: 'rgba(20,184,166,.1)',
+      color: '#14b8a6',
+      marginTop: 0
+    }
+  }, "← Cancel"), /*#__PURE__*/React.createElement("div", {
+    className: "note",
+    style: {
+      marginTop: '20px'
+    }
+  }, "🔒 PII auto-removed before AI · No data stored · Educational use only"))), isLoggedIn && user && tab === 'chat' && /*#__PURE__*/React.createElement(ChatSplitScreen, {
     initialReportId: reportId
   }), isLoggedIn && consent && /*#__PURE__*/React.createElement(ConsentModal, {
     preview: anonText,
